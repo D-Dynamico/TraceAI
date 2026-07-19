@@ -25,3 +25,7 @@ PyGithub==2.5.0
 
 # LLM (Gemini 3 Flash, free tier) — used from Phase 2 onward
 google-generativeai==0.8.3
+
+# Testing
+pytest==8.3.4
+httpx==0.28.1            # required by fastapi.testclient.TestClient

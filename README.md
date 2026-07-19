@@ -139,3 +139,34 @@ cd backend
 The sidecar and the database are written from the same upload, deliberately
 duplicating checksum and extraction data: an original plus its sidecar can be
 verified even if the database is lost.
+
+---
+
+## Tests
+
+```bash
+cd backend
+pytest              # 76 tests, no network, ~10s
+pytest -m live      # 3 more that call the real Gemini API (needs a key, ~45s)
+```
+
+Tests run against a per-test tmp directory, so they never write to the real
+`uploads/` or `data/traceai.db`.
+
+| File                     | Covers                                                    |
+| ------------------------ | --------------------------------------------------------- |
+| `test_preservation.py`   | The section-1 guarantee — checksums, byte-exact download, **tamper detection** |
+| `test_extraction.py`     | DOCX / PPTX / TXT extraction and upload error paths        |
+| `test_categorizer.py`    | Response parsing and normalization of drifted model output |
+| `test_documents_api.py`  | Categorization persisted to SQLite and read back           |
+| `test_security.py`       | Regression tests for fixed vulnerabilities                 |
+| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key          |
+
+`live` tests are deselected by default because they cost free-tier quota and
+need network. They are the only tests that catch a retired model id, a changed
+response shape, or an expired key — the stubbed suite passes through all three,
+so run them after changing anything in `ai/`.
+
+The suite was validated by mutation: removing the doc-id guard, the log
+redaction, or the checksum comparison each causes the corresponding test to
+fail.
