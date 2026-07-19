@@ -23,7 +23,7 @@ import storage
 from ai import categorizer
 from config import settings
 from db import database
-from ingestion import file_parser, url_scraper
+from ingestion import file_parser, text_entry, url_scraper
 from models.document import Categorization
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,21 @@ class UrlIngestResponse(BaseModel):
     char_count: int
     warnings: list[str]
     text_preview: str
+    categorization: CategorizationResponse
+
+
+class TextIngestRequest(BaseModel):
+    text: str
+
+
+class TextIngestResponse(BaseModel):
+    id: str
+    filename: str
+    file_type: str
+    char_count: int
+    warnings: list[str]
+    text_preview: str
+    categorization: CategorizationResponse
 
 
 def _preview(text: str, limit: int = 800) -> str:
@@ -213,22 +228,147 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
     )
 
 
+async def _categorize_and_store(
+    *,
+    doc_id: str,
+    text: str,
+    filename: str,
+    file_type: str,
+    source_url: str = "",
+    metadata: dict | None = None,
+) -> tuple[Categorization, list[str]]:
+    """Classify fileless text and persist it. Returns (categorization, warnings).
+
+    Shared by the URL and written-response paths. Both differ from `/upload` in
+    one way that matters: there is **no original file**, so there is no sidecar
+    and nothing to preserve byte-for-byte (plan.md §4 Module 1 — a text entry is
+    explicitly stored with no original). `original_path` is the empty string
+    rather than NULL, keeping the schema's NOT NULL intact so every reader has a
+    single code path.
+
+    `checksum` is the SHA-256 of the extracted text, not of an original file.
+    For a written response the text *is* the artifact; for a URL it pins which
+    snapshot of a page was ingested, since the page can change under us.
+    """
+    warnings: list[str] = []
+
+    # categorize() never raises — worst case is a filename-based guess at
+    # confidence 0.0. Blocks on network + the rate limiter, so keep it off the
+    # event loop.
+    result = await run_in_threadpool(categorizer.categorize, text, filename)
+    if result.confidence == 0.0:
+        warnings.append("Categorization is unverified — review suggested.")
+
+    try:
+        await run_in_threadpool(
+            database.insert_document,
+            doc_id=doc_id,
+            user_id=DEFAULT_USER,
+            filename=filename,
+            original_path="",
+            file_type=file_type,
+            source_url=source_url,
+            checksum=storage.sha256_bytes(text.encode("utf-8")),
+            raw_text=text,
+            upload_date=storage.now_iso(),
+            document_type=result.document_type,
+            category=result.category,
+            title=result.title,
+            summary=result.summary,
+            extracted_date=result.date,
+            confidence=result.confidence,
+            metadata=metadata or {},
+            skills=result.skills,
+            organizations=result.organizations,
+            people=result.people,
+            tags=result.tags,
+        )
+    except Exception as exc:
+        # Unlike /upload there is no file on disk, so a failed write means the
+        # document is gone entirely. Never report success.
+        logger.exception("Database write failed for %s (%s)", filename, doc_id)
+        raise HTTPException(
+            status_code=500, detail="Content could not be indexed."
+        ) from exc
+
+    return result, warnings
+
+
 @router.post("/ingest-url", response_model=UrlIngestResponse)
 async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
+    # Scraping blocks on network I/O; keep it off the event loop.
     try:
-        result = url_scraper.scrape_url(payload.url)
+        result = await run_in_threadpool(url_scraper.scrape_url, payload.url)
     except ValueError as exc:
+        # Covers BlockedUrlError (bad scheme, non-public destination, oversized
+        # response) — all caller errors.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("URL ingestion failed for %s", payload.url)
         raise HTTPException(status_code=422, detail=f"URL ingestion failed: {exc}") from exc
 
+    if not result.text.strip():
+        # Nothing was extracted, so there is nothing to categorize or store.
+        # plan.md §10: degrade gracefully and tell the user to upload manually.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No readable content could be extracted from that URL. "
+                "Try uploading the content as a file instead."
+            ),
+        )
+
+    doc_id = uuid.uuid4().hex
+    category_result, warnings = await _categorize_and_store(
+        doc_id=doc_id,
+        text=result.text,
+        # The page title is the best filename stand-in; the URL is the fallback.
+        filename=result.title or result.url,
+        file_type="url",
+        source_url=result.url,
+        metadata={
+            "source_type": result.source_type,
+            "scrape_warnings": result.warnings,
+            "char_count": len(result.text),
+        },
+    )
+
     return UrlIngestResponse(
-        id=uuid.uuid4().hex,
+        id=doc_id,
         url=result.url,
-        title=result.title,
+        title=category_result.title or result.title,
         source_type=result.source_type,
         char_count=len(result.text),
-        warnings=result.warnings,
+        warnings=result.warnings + warnings,
         text_preview=_preview(result.text),
+        categorization=_to_response(category_result),
+    )
+
+
+@router.post("/ingest-text", response_model=TextIngestResponse)
+async def ingest_text(payload: TextIngestRequest) -> TextIngestResponse:
+    """Ingest a written response — an achievement with no supporting document."""
+    try:
+        entry = text_entry.prepare(payload.text)
+    except text_entry.InvalidTextEntry as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    filename = text_entry.derive_filename(entry.text)
+    doc_id = uuid.uuid4().hex
+    category_result, warnings = await _categorize_and_store(
+        doc_id=doc_id,
+        text=entry.text,
+        filename=filename,
+        file_type="text_entry",
+        metadata={"char_count": entry.char_count, "entered_manually": True},
+    )
+
+    return TextIngestResponse(
+        id=doc_id,
+        filename=filename,
+        file_type="text_entry",
+        char_count=entry.char_count,
+        warnings=warnings,
+        text_preview=_preview(entry.text),
+        categorization=_to_response(category_result),
     )

@@ -9,7 +9,8 @@ only what those two do not: conventions and environment traps.
 ```bash
 # All backend commands run from backend/. Invoke the venv python directly.
 cd backend
-./.venv/Scripts/python.exe -m pytest -q          # 76 offline tests, ~10s
+./.venv/Scripts/python.exe -m pytest -q          # 128 offline tests, ~11s
+./.venv/Scripts/python.exe -m pytest -m network  # 5 real-HTTP tests, ~2s
 ./.venv/Scripts/python.exe -m pytest -m live     # 3 live Gemini tests, ~45s
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload --port 8000
 
@@ -53,6 +54,23 @@ These have each cost real time. Read before running anything.
   `_redact()` — on the REST transport those messages can carry `?key=<api key>`.
 - Gemini free tier is 10 RPM / 1500 RPD. Calls are serialized by a rate limiter
   that holds its lock across the sleep. This is deliberate; do not parallelize.
+- **Never call `requests.get()` on a user-supplied URL.** Go through
+  `ingestion/url_guard.py::safe_get`, which validates the scheme, rejects hosts
+  resolving to non-public addresses, re-validates every redirect hop, and caps
+  the body at 5 MB. `requests`' own redirect following defeats all of this, so
+  `safe_get` passes `allow_redirects=False` and follows hops itself. It returns
+  a `SafeResponse`, **not** a `requests.Response` — enforcing the size cap
+  consumes the stream, which leaves the real object's `.text`/`.content`
+  unusable.
+- Ingestion is layered on purpose: `url_scraper` routes, `github_scraper` /
+  `web_scraper` fetch, `url_guard` decides what may be fetched. `ScrapeResult`
+  lives in `scrape_result.py` because `url_scraper` imports the scrapers and
+  they need the type — defining it in `url_scraper` is an import cycle.
+- Documents with no original file (`file_type` of `url` or `text_entry`) store
+  `original_path = ""`, not NULL. The column is NOT NULL and keeping it that way
+  means every reader has one code path. Their `checksum` is the SHA-256 of the
+  **text**, not of a file — for a URL it pins which snapshot was ingested.
+  No sidecar is written for them; there is no original to verify.
 
 ## Testing
 
@@ -64,6 +82,12 @@ These have each cost real time. Read before running anything.
 - `live` tests are deselected by default. They are the only thing that catches a
   retired model id, a revoked key, or a changed response shape — run them after
   any change under `ai/`.
+- `network` tests are likewise deselected but cost no quota. Every other URL
+  test stubs `safe_get`, so they are the only cover for real HTTP — run them
+  after any change under `ingestion/`.
+- **Parametrizing a large string builds a test id from its value**, which
+  overflows the `PYTEST_CURRENT_TEST` env var on Windows (32767 chars) and
+  errors in teardown. Pass `pytest.param(big, id="short-name")`.
 - **Validate security tests by mutation.** Break the guard, confirm the right
   test fails, restore. Two of eight critical assertions were hollow when first
   written; both looked fine in a green run.

@@ -11,8 +11,8 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 ## Status
 
 - ✅ Phase 1 — Project setup, file upload, text extraction
-- ✅ **Phase 2 — Gemini categorization + SQLite storage** (current)
-- ⬜ Phase 3 — URL ingestion + written-response input
+- ✅ Phase 2 — Gemini categorization + SQLite storage
+- ✅ **Phase 3 — URL ingestion + written-response input** (current; backend only)
 - ⬜ Phase 4+ — Embeddings, relationship graph, career paths, timeline, RAG
 
 ### Phase 1 capabilities
@@ -23,7 +23,7 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 - React upload UI with drag-and-drop, per-file extraction results, warnings,
   and a download-original link.
 - *Ahead of schedule:* basic URL ingestion (GitHub + generic web) already works;
-  it gets split into `github_scraper` / `web_scraper` in Phase 3.
+  it was split into `github_scraper` / `web_scraper` in Phase 3.
 
 ### Phase 2 capabilities
 - **Automatic categorization** — every upload is classified by Gemini 3 Flash
@@ -40,6 +40,27 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
   Model output is normalized before storage, so a drifted category or a
   confidence returned as `85` instead of `0.85` does not corrupt the database.
 - **Free-tier aware** — calls are serialized to stay within 10 RPM.
+
+### Phase 3 capabilities
+- **URL ingestion that persists.** `POST /api/ingest-url` now runs the same
+  categorize-and-store pipeline as an upload — previously it scraped a page and
+  threw the result away. GitHub repo URLs pull description, primary language,
+  topics, and README; anything else is scraped for visible text.
+- **Written responses.** `POST /api/ingest-text` accepts a typed achievement
+  ("Led the Data Science Club in 2024") with no file at all. Not every
+  achievement has a certificate — club leadership, hackathon wins, and
+  volunteer work often exist only as memories.
+- **SSRF protection.** User-supplied URLs are validated before every request:
+  http/https only, and the hostname must resolve exclusively to publicly
+  routable addresses. Redirects are followed manually so each hop is
+  re-validated, and response bodies are capped at 5 MB. Without this,
+  `http://169.254.169.254/latest/meta-data/` would be fetchable — and its body
+  returned to the caller — the moment the app is deployed. See
+  `ingestion/url_guard.py`.
+- **Fileless documents.** URL and text-entry documents have no original file, so
+  `original_path` is empty and no sidecar is written. `checksum` is the SHA-256
+  of the text itself, which pins *which* snapshot of a page was ingested.
+  Preservation still applies in full to uploaded files.
 
 ### Original Format Preservation
 
@@ -122,7 +143,8 @@ cd backend
 | ------ | ------------------------------- | ------------------------------------------------------- |
 | GET    | `/api/health`                   | Health check; reports whether an API key is configured   |
 | POST   | `/api/upload`                   | Multipart upload → extracted text + sha256 + categorization |
-| POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text                       |
+| POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored |
+| POST   | `/api/ingest-text`              | `{ "text": "..." }` → written response, categorized + stored |
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
 | GET    | `/api/documents/{id}/download`  | Original file, integrity-verified                       |
@@ -146,7 +168,8 @@ verified even if the database is lost.
 
 ```bash
 cd backend
-pytest              # 76 tests, no network, ~10s
+pytest              # 128 tests, no network, ~11s
+pytest -m network   # 5 more that make real HTTP calls (no API quota, ~2s)
 pytest -m live      # 3 more that call the real Gemini API (needs a key, ~45s)
 ```
 
@@ -160,6 +183,9 @@ Tests run against a per-test tmp directory, so they never write to the real
 | `test_categorizer.py`    | Response parsing and normalization of drifted model output |
 | `test_documents_api.py`  | Categorization persisted to SQLite and read back           |
 | `test_security.py`       | Regression tests for fixed vulnerabilities                 |
+| `test_url_guard.py`      | SSRF guards — schemes, private/multicast addresses, redirect hops, size caps |
+| `test_ingest_fileless.py`| URL + written-response ingestion reaching SQLite            |
+| `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key          |
 
 `live` tests are deselected by default because they cost free-tier quota and
@@ -167,6 +193,15 @@ need network. They are the only tests that catch a retired model id, a changed
 response shape, or an expired key — the stubbed suite passes through all three,
 so run them after changing anything in `ai/`.
 
+`network` tests are deselected for the same reason but cost no quota. They are
+the only tests that exercise real HTTP: every other URL test stubs `safe_get`,
+so nothing else would catch a changed GitHub response shape or a redirect loop
+that stopped following hops.
+
 The suite was validated by mutation: removing the doc-id guard, the log
-redaction, or the checksum comparison each causes the corresponding test to
-fail.
+redaction, the checksum comparison, the private-address check, the multicast
+exclusion, or the streamed size count each causes the corresponding test to
+fail. One finding from that pass is recorded in `test_ingest_fileless.py` — the
+route-level SSRF test stays green if you remove *either* validation layer,
+because `scrape_url` and `safe_get` both validate. Both are kept: `safe_get`
+covers redirect hops that `scrape_url` never sees.
