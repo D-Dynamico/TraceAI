@@ -236,6 +236,7 @@ async def _categorize_and_store(
     file_type: str,
     source_url: str = "",
     metadata: dict | None = None,
+    date_fallback: str | None = None,
 ) -> tuple[Categorization, list[str]]:
     """Classify fileless text and persist it. Returns (categorization, warnings).
 
@@ -258,6 +259,14 @@ async def _categorize_and_store(
     result = await run_in_threadpool(categorizer.categorize, text, filename)
     if result.confidence == 0.0:
         warnings.append("Categorization is unverified — review suggested.")
+
+    # Resolve the date once, here, so the row and the response cannot disagree.
+    # A date read out of the content wins: it describes the achievement.
+    # `date_fallback` is the source's own metadata (a repo's creation date) —
+    # still *known*, so it belongs in extracted_date rather than being left NULL
+    # for the timeline's upload-date fallback to invent.
+    if not result.date and date_fallback:
+        result = result.model_copy(update={"date": date_fallback})
 
     try:
         await run_in_threadpool(
@@ -330,7 +339,9 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
             "source_type": result.source_type,
             "scrape_warnings": result.warnings,
             "char_count": len(result.text),
+            "source_date": result.source_date,
         },
+        date_fallback=result.source_date,
     )
 
     return UrlIngestResponse(

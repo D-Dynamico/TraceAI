@@ -129,6 +129,13 @@ class DocumentSummary(BaseModel):
     summary: str | None = None
     extracted_date: str | None = None
     upload_date: str | None = None
+    # The date a consumer should actually display or sort on, plus where it came
+    # from. Resolved server-side in database._resolve_date so the timeline and
+    # the graph cannot apply plan.md §10's upload-date fallback while forgetting
+    # its "flag for user review" half. "assumed" means we guessed — show it as a
+    # guess.
+    effective_date: str | None = None
+    date_source: str = "assumed"  # "extracted" | "assumed"
     confidence: float | None = None
     checksum: str | None = None
 

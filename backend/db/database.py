@@ -186,6 +186,36 @@ def list_documents(
     return [_row_to_dict(row) for row in rows]
 
 
+def _resolve_date(doc: dict[str, Any]) -> None:
+    """Attach `effective_date` and `date_source` to a document dict, in place.
+
+    plan.md §10 has two halves: fall back to the upload date when no date was
+    found, **and flag it for user review**. Everything so far implemented only
+    the first half, which is how a repo created in 2011 ends up sitting on the
+    timeline at the moment it was ingested — silently wrong, and plausible
+    enough that nobody notices.
+
+    `extracted_date` stays NULL when nothing was found (a deliberate Phase 2
+    choice) precisely so the two cases stay distinguishable here. This is the
+    single place that collapses them, so no reader can apply the fallback while
+    forgetting the flag — which is exactly the mistake the timeline was set up
+    to make.
+
+    `effective_date` is trimmed to "YYYY-MM" to match the granularity of
+    `extracted_date`; mixed-granularity values still sort correctly as strings
+    ("2024" < "2024-03" < "2025").
+    """
+    extracted = doc.get("extracted_date")
+    if extracted:
+        doc["effective_date"] = extracted
+        doc["date_source"] = "extracted"
+        return
+
+    upload = doc.get("upload_date") or ""
+    doc["effective_date"] = upload[:7] if len(upload) >= 7 else (upload or None)
+    doc["date_source"] = "assumed"
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     doc = dict(row)
     raw = doc.pop("metadata_json", None)
@@ -194,4 +224,5 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     except json.JSONDecodeError:
         logger.warning("Malformed metadata_json for document %s", doc.get("id"))
         doc["metadata"] = {}
+    _resolve_date(doc)
     return doc

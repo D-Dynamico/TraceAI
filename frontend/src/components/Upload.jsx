@@ -101,6 +101,12 @@ function ResultCard({ result }) {
     `${result.char_count} chars`,
   ].filter(Boolean);
 
+  // plan.md §10: when no date is found the upload date is used as a fallback
+  // *and flagged for review*. Saying so here is the only chance the user gets
+  // to correct it while the document is still fresh in mind — on the timeline
+  // it will just look like a document from today.
+  const dateAssumed = cat && !cat.date;
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -124,6 +130,12 @@ function ResultCard({ result }) {
       {cat && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           <Confidence value={cat.confidence} />
+          {dateAssumed && (
+            <span className="inline-flex items-center gap-1 text-xs text-amber-700">
+              <span aria-hidden="true">⚠</span> No date found — will show as
+              today on your timeline
+            </span>
+          )}
         </div>
       )}
 

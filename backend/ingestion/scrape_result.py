@@ -27,3 +27,10 @@ class ScrapeResult:
     title: str = ""
     source_type: str = "web"        # "web" | "github"
     warnings: list[str] = field(default_factory=list)
+    # A date the *source* knows about itself, as "YYYY-MM" — a GitHub repo's
+    # creation date, say. Distinct from a date Gemini reads out of the text: a
+    # README rarely states when the project began, so without this a repo has
+    # no date at all and the timeline falls back to the upload date (plan.md
+    # §10), stamping a 2011 project with today. Still a *known* date, not an
+    # assumed one, which is why it populates extracted_date.
+    source_date: str | None = None

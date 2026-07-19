@@ -29,12 +29,31 @@ RAW_ROOT = "https://raw.githubusercontent.com"
 README_BRANCHES = ("main", "master")
 
 
+def month_from_iso(value: str | None) -> str | None:
+    """"2011-02-13T18:38:17Z" -> "2011-02". None for anything unparseable.
+
+    Trimmed to the month because that is the granularity the rest of the system
+    stores (`Categorization.date` accepts "YYYY" or "YYYY-MM"), and a
+    day-precision repo creation date implies more than it knows about when the
+    work actually happened.
+    """
+    if not isinstance(value, str) or len(value) < 7:
+        return None
+    year, _, month = value[:4], value[4:5], value[5:7]
+    if not (year.isdigit() and month.isdigit()):
+        return None
+    if not 1 <= int(month) <= 12:
+        return None
+    return f"{year}-{month}"
+
+
 def scrape(owner: str, repo: str, url: str) -> ScrapeResult:
     """Fetch repo metadata + README for `owner/repo`."""
     repo = repo.removesuffix(".git")
     warnings: list[str] = []
     parts: list[str] = []
     title = f"{owner}/{repo}"
+    source_date: str | None = None
 
     api = f"{API_ROOT}/{owner}/{repo}"
     try:
@@ -49,6 +68,11 @@ def scrape(owner: str, repo: str, url: str) -> ScrapeResult:
             topics = data.get("topics") or []
             if topics:
                 parts.append(f"Topics: {', '.join(topics)}")
+            # Free — it is in the response we already made. Without it the repo
+            # has no date and the timeline invents one.
+            source_date = month_from_iso(data.get("created_at"))
+            if source_date:
+                parts.append(f"Repository created: {source_date}")
         else:
             warnings.append(f"GitHub API returned {meta.status_code} for {api}")
     except (requests.RequestException, url_guard.BlockedUrlError, ValueError) as exc:
@@ -62,7 +86,9 @@ def scrape(owner: str, repo: str, url: str) -> ScrapeResult:
     if not parts:
         warnings.append("No repo metadata or README could be retrieved.")
 
-    return ScrapeResult(url, "\n\n".join(parts).strip(), title, "github", warnings)
+    return ScrapeResult(
+        url, "\n\n".join(parts).strip(), title, "github", warnings, source_date
+    )
 
 
 def _fetch_readme(owner: str, repo: str) -> str:

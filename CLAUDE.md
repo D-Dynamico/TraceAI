@@ -66,6 +66,13 @@ These have each cost real time. Read before running anything.
   `web_scraper` fetch, `url_guard` decides what may be fetched. `ScrapeResult`
   lives in `scrape_result.py` because `url_scraper` imports the scrapers and
   they need the type — defining it in `url_scraper` is an import cycle.
+- **Never read `extracted_date` directly for display or sorting.** Use
+  `effective_date` + `date_source` from `database._resolve_date`, the single
+  place that applies plan.md §10's upload-date fallback. A NULL
+  `extracted_date` means "unknown", and reading the column raw either drops the
+  document or silently dates it to its upload — which is how a repo created in
+  2011 lands on the timeline today. `date_source` is `extracted` or `assumed`;
+  §10 requires the assumed case be flagged, not just filled.
 - Documents with no original file (`file_type` of `url` or `text_entry`) store
   `original_path = ""`, not NULL. The column is NOT NULL and keeping it that way
   means every reader has one code path. Their `checksum` is the SHA-256 of the
@@ -79,6 +86,11 @@ These have each cost real time. Read before running anything.
   silently get the stub and pass while testing nothing. Mark such tests
   `@pytest.mark.nostub`. This has already produced one false-passing security
   test.
+- The same stub also returns a fixed `date="2024-03"` for **every** document, so
+  any test about a *missing* date passes against the stub's date and never
+  exercises the fallback. Four tests in `test_dates.py` did exactly this before
+  the `no_date_found` fixture there was added — copy it rather than assuming a
+  null date.
 - `live` tests are deselected by default. They are the only thing that catches a
   retired model id, a revoked key, or a changed response shape — run them after
   any change under `ai/`.

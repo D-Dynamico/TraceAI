@@ -180,7 +180,7 @@ verified even if the database is lost.
 
 ```bash
 cd backend
-pytest              # 128 tests, no network, ~11s
+pytest              # 147 tests, no network, ~11s
 pytest -m network   # 5 more that make real HTTP calls (no API quota, ~2s)
 pytest -m live      # 3 more that call the real Gemini API (needs a key, ~45s)
 ```
@@ -197,6 +197,7 @@ Tests run against a per-test tmp directory, so they never write to the real
 | `test_security.py`       | Regression tests for fixed vulnerabilities                 |
 | `test_url_guard.py`      | SSRF guards — schemes, private/multicast addresses, redirect hops, size caps |
 | `test_ingest_fileless.py`| URL + written-response ingestion reaching SQLite            |
+| `test_dates.py`          | Repo creation dates, and the known-vs-assumed date flag    |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key          |
 
