@@ -12,7 +12,7 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 
 - ✅ Phase 1 — Project setup, file upload, text extraction
 - ✅ Phase 2 — Gemini categorization + SQLite storage
-- ✅ **Phase 3 — URL ingestion + written-response input** (current; backend only)
+- ✅ **Phase 3 — URL ingestion + written-response input** (current)
 - ⬜ Phase 4+ — Embeddings, relationship graph, career paths, timeline, RAG
 
 ### Phase 1 capabilities
@@ -61,6 +61,18 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
   `original_path` is empty and no sidecar is written. `checksum` is the SHA-256
   of the text itself, which pins *which* snapshot of a page was ingested.
   Preservation still applies in full to uploaded files.
+- **The UI now shows what the AI did.** Every result card carries the Gemini
+  title, a color-coded category badge, a confidence meter, the summary, and
+  extracted skills / organizations / people / tags. Before this, the API
+  returned all of it and `Upload.jsx` discarded it — the app looked identical
+  to Phase 1. A third input is added alongside file-drop and URL: a text box
+  for typing an achievement directly.
+
+Category colors live in `frontend/src/categories.js` — one source of truth, so
+the Phase 6 timeline and Phase 5 graph color a category the same way an upload
+card does. The hues follow plan.md §4 Module 4; the exact steps come from a
+validated categorical palette rather than taste, and the file records the
+validator results and the two candidate orderings that failed.
 
 ### Original Format Preservation
 

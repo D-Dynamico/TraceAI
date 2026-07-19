@@ -26,6 +26,15 @@ export async function ingestUrl(url) {
   return handle(res);
 }
 
+export async function ingestText(text) {
+  const res = await fetch("/api/ingest-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  return handle(res);
+}
+
 export async function health() {
   const res = await fetch("/api/health");
   return handle(res);
