@@ -19,9 +19,11 @@ pdf2image==1.17.0
 Pillow==11.1.0
 
 # URL scraping (GitHub / portfolio links) — Phase 3
+# No PyGithub: it issues its own HTTP, which would route GitHub API calls
+# around ingestion/url_guard.py and make "every outbound fetch goes through
+# safe_get" no longer checkable. github_scraper.py uses the REST API directly.
 requests==2.32.3
 beautifulsoup4==4.12.3
-PyGithub==2.5.0
 
 # LLM (Gemini 3 Flash, free tier) — used from Phase 2 onward
 google-generativeai==0.8.3

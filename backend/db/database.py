@@ -186,8 +186,10 @@ def list_documents(
     return [_row_to_dict(row) for row in rows]
 
 
-def _resolve_date(doc: dict[str, Any]) -> None:
-    """Attach `effective_date` and `date_source` to a document dict, in place.
+def resolve_date(
+    extracted_date: str | None, upload_date: str | None
+) -> tuple[str | None, str]:
+    """Collapse (extracted, upload) into (effective_date, date_source).
 
     plan.md §10 has two halves: fall back to the upload date when no date was
     found, **and flag it for user review**. Everything so far implemented only
@@ -201,19 +203,27 @@ def _resolve_date(doc: dict[str, Any]) -> None:
     forgetting the flag — which is exactly the mistake the timeline was set up
     to make.
 
+    Public because the ingest endpoints need the same answer at *write* time —
+    they return a card to the user before any read path runs, and computing the
+    flag a second time in the route layer is precisely the duplication this
+    function exists to prevent.
+
     `effective_date` is trimmed to "YYYY-MM" to match the granularity of
     `extracted_date`; mixed-granularity values still sort correctly as strings
     ("2024" < "2024-03" < "2025").
     """
-    extracted = doc.get("extracted_date")
-    if extracted:
-        doc["effective_date"] = extracted
-        doc["date_source"] = "extracted"
-        return
+    if extracted_date:
+        return extracted_date, "extracted"
 
-    upload = doc.get("upload_date") or ""
-    doc["effective_date"] = upload[:7] if len(upload) >= 7 else (upload or None)
-    doc["date_source"] = "assumed"
+    upload = upload_date or ""
+    return (upload[:7] if len(upload) >= 7 else (upload or None)), "assumed"
+
+
+def _resolve_date(doc: dict[str, Any]) -> None:
+    """Attach `effective_date` and `date_source` to a document dict, in place."""
+    doc["effective_date"], doc["date_source"] = resolve_date(
+        doc.get("extracted_date"), doc.get("upload_date")
+    )
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

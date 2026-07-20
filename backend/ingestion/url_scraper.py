@@ -6,6 +6,7 @@ in `github_scraper` and `web_scraper`; the destination safety checks live in
 is a change to the table below rather than to fetching logic.
 
   github.com/owner/repo  -> github_scraper  (API + README)
+  github.com/login       -> github_scraper  (profile + public repos)
   anything else          -> web_scraper     (HTML -> visible text)
 """
 
@@ -39,8 +40,20 @@ def scrape_url(url: str) -> ScrapeResult:
 
     parsed = urlparse(url)
     if parsed.netloc.lower() in GITHUB_HOSTS:
-        match = github_scraper.REPO_PATH_RE.match(parsed.path)
-        if match:
-            return github_scraper.scrape(match.group(1), match.group(2), url)
+        repo = github_scraper.REPO_PATH_RE.match(parsed.path)
+        if repo:
+            return github_scraper.scrape(repo.group(1), repo.group(2), url)
+
+        profile = github_scraper.PROFILE_PATH_RE.match(parsed.path)
+        # A single path segment is *shaped* like a username but is far more
+        # often one of github.com's own routes (/pricing, /explore). Those are
+        # excluded by name; for anything else that merely looks like a user,
+        # `scrape_profile` returns None when the API says no such user, and we
+        # fall through to the web scraper — which handles an unknown
+        # github.com route better than an empty profile document would.
+        if profile and profile.group(1).lower() not in github_scraper.RESERVED_PATHS:
+            result = github_scraper.scrape_profile(profile.group(1), url)
+            if result is not None:
+                return result
 
     return web_scraper.scrape(url)

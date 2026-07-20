@@ -116,6 +116,45 @@ def validate_url(url: str) -> str:
     return url
 
 
+def safe_display_url(value: object) -> str | None:
+    """Return `value` if it is safe to put in an href, else None.
+
+    A *different* question from `validate_url`, which asks "may the server fetch
+    this?" and answers it with DNS resolution. This asks "may the browser be
+    handed this as a link?" — no resolution, no network, because the destination
+    being private is not the risk here.
+
+    The risk is the scheme. A repo's `homepage` and a profile's `blog` are
+    free-text fields their owner controls, we copy them out of the GitHub API,
+    and the card renders them as a clickable link. `javascript:alert(1)` in that
+    field is stored XSS against anyone who ingests the repo. React does not
+    block a `javascript:` href — it warns and, as of 18, still renders it.
+
+    Rejecting by *allowlist* rather than blocking `javascript:` by name, because
+    the blocklist approach loses to `java\\tscript:`, `JaVaScript:`, and
+    `data:text/html`. Only http and https get through.
+    """
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return None
+    # `urlparse` lowercases nothing for us and tolerates embedded control
+    # characters, which is exactly how `java\tscript:` sneaks past a naive
+    # check — browsers strip those before dispatching the scheme. Strip them
+    # the same way before comparing.
+    scheme = "".join(parsed.scheme.split()).lower()
+    if scheme not in ALLOWED_SCHEMES:
+        return None
+    if not parsed.netloc:
+        return None
+    return candidate
+
+
 @dataclass
 class SafeResponse:
     """A fetched response with its body already buffered under a size cap.

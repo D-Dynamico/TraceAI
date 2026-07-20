@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 import storage
@@ -45,6 +45,13 @@ class CategorizationResponse(BaseModel):
     people: list[str]
     tags: list[str]
     confidence: float
+    # The date a card should actually show, and whether we know it or guessed
+    # it. Resolved server-side by `database.resolve_date` so the UI cannot
+    # reimplement plan.md §10's fallback and get the "flag it" half wrong —
+    # which is exactly what the client-side `dateAssumed = cat && !cat.date`
+    # check it replaces was doing.
+    effective_date: str | None = None
+    date_source: str = "assumed"  # "extracted" | "assumed"
 
 
 class ExtractionResponse(BaseModel):
@@ -75,6 +82,10 @@ class UrlIngestResponse(BaseModel):
     warnings: list[str]
     text_preview: str
     categorization: CategorizationResponse
+    # Structured facts the source stated about itself — stars, languages, a
+    # profile's repo list. Empty for a generic web page. See
+    # `ScrapeResult.details`; `details["kind"]` names the shape.
+    details: dict = Field(default_factory=dict)
 
 
 class TextIngestRequest(BaseModel):
@@ -96,8 +107,13 @@ def _preview(text: str, limit: int = 800) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _to_response(result: Categorization) -> CategorizationResponse:
-    return CategorizationResponse(**result.model_dump())
+def _to_response(result: Categorization, upload_date: str) -> CategorizationResponse:
+    effective_date, date_source = database.resolve_date(result.date, upload_date)
+    return CategorizationResponse(
+        **result.model_dump(),
+        effective_date=effective_date,
+        date_source=date_source,
+    )
 
 
 @router.post("/upload", response_model=ExtractionResponse)
@@ -224,7 +240,7 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
         size_bytes=len(contents),
         warnings=warnings,
         text_preview=_preview(result.text),
-        categorization=_to_response(category_result),
+        categorization=_to_response(category_result, upload_date),
     )
 
 
@@ -237,8 +253,12 @@ async def _categorize_and_store(
     source_url: str = "",
     metadata: dict | None = None,
     date_fallback: str | None = None,
-) -> tuple[Categorization, list[str]]:
-    """Classify fileless text and persist it. Returns (categorization, warnings).
+) -> tuple[Categorization, list[str], str]:
+    """Classify fileless text and persist it.
+
+    Returns (categorization, warnings, upload_date). The upload date comes back
+    because the caller needs it to resolve the displayed date — the row and the
+    response must agree on which timestamp the fallback was measured against.
 
     Shared by the URL and written-response paths. Both differ from `/upload` in
     one way that matters: there is **no original file**, so there is no sidecar
@@ -252,6 +272,7 @@ async def _categorize_and_store(
     snapshot of a page was ingested, since the page can change under us.
     """
     warnings: list[str] = []
+    upload_date = storage.now_iso()
 
     # categorize() never raises — worst case is a filename-based guess at
     # confidence 0.0. Blocks on network + the rate limiter, so keep it off the
@@ -279,7 +300,7 @@ async def _categorize_and_store(
             source_url=source_url,
             checksum=storage.sha256_bytes(text.encode("utf-8")),
             raw_text=text,
-            upload_date=storage.now_iso(),
+            upload_date=upload_date,
             document_type=result.document_type,
             category=result.category,
             title=result.title,
@@ -300,7 +321,7 @@ async def _categorize_and_store(
             status_code=500, detail="Content could not be indexed."
         ) from exc
 
-    return result, warnings
+    return result, warnings, upload_date
 
 
 @router.post("/ingest-url", response_model=UrlIngestResponse)
@@ -328,7 +349,7 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
         )
 
     doc_id = uuid.uuid4().hex
-    category_result, warnings = await _categorize_and_store(
+    category_result, warnings, upload_date = await _categorize_and_store(
         doc_id=doc_id,
         text=result.text,
         # The page title is the best filename stand-in; the URL is the fallback.
@@ -340,6 +361,9 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
             "scrape_warnings": result.warnings,
             "char_count": len(result.text),
             "source_date": result.source_date,
+            # Persisted so a later reader (the Phase 6 timeline, the graph) can
+            # render a repo as a repo without re-scraping it.
+            "details": result.details,
         },
         date_fallback=result.source_date,
     )
@@ -352,7 +376,8 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
         char_count=len(result.text),
         warnings=result.warnings + warnings,
         text_preview=_preview(result.text),
-        categorization=_to_response(category_result),
+        categorization=_to_response(category_result, upload_date),
+        details=result.details,
     )
 
 
@@ -366,7 +391,7 @@ async def ingest_text(payload: TextIngestRequest) -> TextIngestResponse:
 
     filename = text_entry.derive_filename(entry.text)
     doc_id = uuid.uuid4().hex
-    category_result, warnings = await _categorize_and_store(
+    category_result, warnings, upload_date = await _categorize_and_store(
         doc_id=doc_id,
         text=entry.text,
         filename=filename,
@@ -381,5 +406,5 @@ async def ingest_text(payload: TextIngestRequest) -> TextIngestResponse:
         char_count=entry.char_count,
         warnings=warnings,
         text_preview=_preview(entry.text),
-        categorization=_to_response(category_result),
+        categorization=_to_response(category_result, upload_date),
     )

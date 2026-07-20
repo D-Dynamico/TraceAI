@@ -285,3 +285,64 @@ def test_normalized_url_still_goes_through_validation():
     """
     with pytest.raises(BlockedUrlError):
         url_guard.validate_url(url_guard.normalize_url("127.0.0.1:8000/api"))
+
+
+# --- safe_display_url ------------------------------------------------------
+#
+# A different question from validate_url: not "may the server fetch this?" but
+# "may the browser be handed this as an href?". Scraped fields a third party
+# controls (a repo's homepage, a profile's blog) are rendered as links, and
+# React renders a `javascript:` href rather than blocking it.
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://requests.readthedocs.io",
+        "http://example.com/x?y=1#z",
+        "https://user.github.io/portfolio/",
+    ],
+)
+def test_display_url_allows_http_and_https(url):
+    assert url_guard.safe_display_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "javascript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "JaVaScript:alert(1)",
+        "java\tscript:alert(1)",       # urlparse strips the tab; browsers too
+        "java\nscript:alert(1)",
+        "  javascript:alert(1)",
+        "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+        "vbscript:msgbox(1)",
+        "file:///etc/passwd",
+        "about:blank",
+        # These two carry a netloc, so the netloc check below cannot be what
+        # rejects them — only the scheme allowlist can. Without them this test
+        # passes against a `scheme == "javascript"` blocklist, because every
+        # other case here happens to be netloc-less. Verified by mutation.
+        "ftp://files.example.com/payload",
+        "gopher://example.com/1",
+    ],
+)
+def test_display_url_rejects_non_http_schemes(hostile):
+    """Allowlist, not blocklist — a blocklist loses to case and whitespace.
+
+    Mutation: change the check to `if scheme == "javascript": return None`
+    -> the ftp: and gopher: cases fail.
+    """
+    assert url_guard.safe_display_url(hostile) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", None, 123, [], "/relative/path", "//protocol-relative.example",
+     "not a url", "https://"],
+)
+def test_display_url_rejects_junk(value):
+    """Includes protocol-relative `//host`, which inherits the page's scheme
+    and is a link to somewhere we never validated."""
+    assert url_guard.safe_display_url(value) is None

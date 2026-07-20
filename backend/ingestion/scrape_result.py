@@ -9,6 +9,7 @@ defining it there would be an import cycle. `url_scraper` re-exports it, so
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # The shared User-Agent. Sites that block unknown agents block all of our
 # scrapers identically, so this belongs with the shared type.
@@ -34,3 +35,14 @@ class ScrapeResult:
     # §10), stamping a 2011 project with today. Still a *known* date, not an
     # assumed one, which is why it populates extracted_date.
     source_date: str | None = None
+    # Structured facts the source states about itself — a repo's star count, its
+    # language breakdown, a profile's repo list. Deliberately *not* folded into
+    # `text`: that field is the Gemini input and the future embedding source,
+    # and star counts do not help either. This is display data, carried
+    # alongside so the card can show a repo as a repo without the UI having to
+    # re-parse prose out of the scraped text.
+    #
+    # Free-form by scraper. `details["kind"]` names the shape ("repo",
+    # "profile"); readers must tolerate its absence, since a scrape that
+    # partially failed still returns whatever it did get.
+    details: dict[str, Any] = field(default_factory=dict)

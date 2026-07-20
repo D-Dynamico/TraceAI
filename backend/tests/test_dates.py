@@ -199,6 +199,65 @@ def test_listings_carry_the_flag_too(client, monkeypatch, no_date_found):
     assert rows and all("date_source" in r and r["effective_date"] for r in rows)
 
 
+# --- The flag reaches the ingest response ------------------------------------
+#
+# The card is rendered from the ingest response, before any read path runs. Until
+# these existed the frontend recomputed the flag itself as `cat && !cat.date` —
+# the exact duplication resolve_date exists to prevent.
+
+
+def test_ingest_url_response_carries_the_date_flag(client, fake_repo_url, no_date_found):
+    body = client.post(
+        "/api/ingest-url", json={"url": "https://github.com/psf/requests"}
+    ).json()["categorization"]
+
+    assert body["date_source"] == "extracted"
+    assert body["effective_date"] == "2011-02"
+
+
+def test_ingest_url_response_flags_an_assumed_date(client, monkeypatch, no_date_found):
+    """Mutation: hardcode date_source="extracted" in _to_response -> this fails."""
+    monkeypatch.setattr(
+        "ingestion.url_scraper.scrape_url",
+        lambda url: ScrapeResult(url, "some text", "A Page", "web", []),
+    )
+    body = client.post(
+        "/api/ingest-url", json={"url": "https://example.com"}
+    ).json()["categorization"]
+
+    assert body["date"] is None, "the unknown date stays unknown"
+    assert body["date_source"] == "assumed"
+    assert body["effective_date"], "but the card still gets something to show"
+
+
+def test_upload_response_carries_the_date_flag(client, stored_doc, stub_result):
+    _, _, body = stored_doc
+    assert body["categorization"]["date_source"] == "extracted"
+    assert body["categorization"]["effective_date"] == stub_result.date
+
+
+def test_text_entry_response_carries_the_date_flag(client, monkeypatch, no_date_found):
+    body = client.post(
+        "/api/ingest-text", json={"text": "Led the Data Science Club, ran 5 workshops."}
+    ).json()["categorization"]
+
+    assert body["date_source"] == "assumed"
+    assert body["effective_date"]
+
+
+def test_response_and_row_agree_on_the_flag(client, monkeypatch, no_date_found):
+    """The whole point of resolving in one place: these cannot disagree."""
+    monkeypatch.setattr(
+        "ingestion.url_scraper.scrape_url",
+        lambda url: ScrapeResult(url, "some text", "A Page", "web", []),
+    )
+    body = client.post("/api/ingest-url", json={"url": "https://example.com"}).json()
+    row = database.get_document(body["id"])
+
+    assert body["categorization"]["date_source"] == row["date_source"]
+    assert body["categorization"]["effective_date"] == row["effective_date"]
+
+
 def test_summary_model_exposes_the_flag():
     """The API contract, not just the dict — the timeline consumes this model."""
     doc = DocumentSummary.model_validate(
