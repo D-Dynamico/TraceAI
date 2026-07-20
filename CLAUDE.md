@@ -4,6 +4,12 @@ Guidance for agents working in this repo. Product scope and phases live in
 `plan.md`; setup, API, and test layout live in `README.md`. This file covers
 only what those two do not: conventions and environment traps.
 
+## Responses
+
+Be extremely concise. Sacrifice grammar for concision and clarity. Applies to
+chat replies, not to code comments or commit messages — those keep their
+reasoning.
+
 ## Commands
 
 ```bash
