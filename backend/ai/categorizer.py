@@ -223,9 +223,39 @@ def fallback_categorization(filename: str, reason: str) -> Categorization:
         category=category,
         title=stem.strip().title() or filename,
         date=year_match.group(0) if year_match else None,
-        summary=f"Automatic categorization unavailable ({reason}). Derived from filename.",
+        # Phrased for the person who sees it on a card, not for a log reader.
+        # "unavailable (AI service error (ResourceExhausted))" was the whole
+        # sentence a free-tier rate limit produced, which reads as a broken
+        # site rather than as "wait a moment" — the one failure here that
+        # actually resolves itself.
+        summary=f"Not categorized yet — {reason}. Details below came from the filename.",
         confidence=0.0,
     )
+
+
+def _human_reason(exc: Exception) -> str:
+    """Turn an SDK exception into something worth showing on a card.
+
+    Only one distinction matters to the reader: will this fix itself? A free
+    tier of 10 RPM / 1500 RPD means quota exhaustion is the *expected* failure
+    during a batch upload, and it clears on its own — saying so is the
+    difference between "wait a moment" and "this site is broken".
+
+    Matched on the exception name and message rather than by importing
+    google.api_core: the SDK has moved these classes before, and a categorizer
+    that crashes while explaining a failure would defeat the never-raises
+    guarantee this module exists to provide.
+    """
+    name = type(exc).__name__
+    text = f"{name} {exc}".lower()
+    if "resourceexhausted" in name.lower() or "429" in text or "quota" in text:
+        return "the free AI quota is used up for now, so try again shortly"
+    # "unavailable" deliberately does NOT belong here — it is gRPC's
+    # service-unavailable status (a 503), not a timeout, and lumping the two
+    # together told a caller their request was slow when it was refused.
+    if "deadline" in text or "timeout" in text or "timed out" in text:
+        return "the AI service did not respond in time"
+    return "the AI service could not be reached"
 
 
 def categorize(text: str, filename: str = "") -> Categorization:
@@ -265,7 +295,7 @@ def categorize(text: str, filename: str = "") -> Categorization:
             "Gemini call failed for %s: %s: %s",
             filename, type(exc).__name__, _redact(exc),
         )
-        return fallback_categorization(filename, f"AI service error ({type(exc).__name__})")
+        return fallback_categorization(filename, _human_reason(exc))
 
     # A model that returns nothing usable is a failure even when it parses.
     if not result.title and not result.summary:

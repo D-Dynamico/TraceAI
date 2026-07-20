@@ -160,4 +160,30 @@ def test_api_failure_degrades_instead_of_raising(monkeypatch):
     result = categorizer.categorize("Some certificate text here.", "cert.pdf")
 
     assert result.confidence == 0.0
-    assert "error" in result.summary.lower()
+    # Asserts the failure is *communicated*, not that a particular word is
+    # used — the previous version pinned the literal string "error", which is
+    # the sort of assertion that blocks a wording fix without catching a bug.
+    assert result.summary and "filename" in result.summary.lower()
+    assert result.category  # still usable, still lands in the database
+
+
+@pytest.mark.nostub
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        (RuntimeError("429 Resource has been exhausted (quota)"), "quota"),
+        (type("ResourceExhausted", (Exception,), {})("slow down"), "quota"),
+        (RuntimeError("504 Deadline Exceeded"), "respond in time"),
+        (RuntimeError("503 backend unavailable"), "could not be reached"),
+        (RuntimeError("something odd"), "could not be reached"),
+    ],
+)
+def test_failure_reasons_are_readable(exc, expected):
+    """A rate limit clears itself; the card should say so rather than printing
+    an SDK class name.
+
+    "unavailable" is gRPC's service-unavailable status, not a timeout — the
+    503 case above pins that, because bucketing it as a timeout tells the user
+    their request was slow when it was actually refused.
+    """
+    assert expected in categorizer._human_reason(exc)
