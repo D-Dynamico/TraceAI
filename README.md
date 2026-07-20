@@ -44,8 +44,17 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 ### Phase 3 capabilities
 - **URL ingestion that persists.** `POST /api/ingest-url` now runs the same
   categorize-and-store pipeline as an upload — previously it scraped a page and
-  threw the result away. GitHub repo URLs pull description, primary language,
-  topics, and README; anything else is scraped for visible text.
+  threw the result away. Anything not recognised is scraped for visible text.
+- **GitHub repos and profiles.** A repo URL pulls description, topics, README,
+  and a language breakdown by bytes, plus stars, forks, license, creation date
+  and last-push date. A bare profile URL (`github.com/<login>`) used to fall
+  through to the generic HTML scraper; it now reaches the user API and returns
+  the bio, public repo count, and repo list — **one profile is one document**,
+  the same contract as every other input. github.com's own routes
+  (`/pricing`, `/explore`, …) are excluded by name, and an unrecognised single
+  path segment degrades to the web scraper rather than storing an empty
+  profile. The GitHub REST API is called directly rather than via PyGithub,
+  which issues its own HTTP and would bypass `url_guard`.
 - **Written responses.** `POST /api/ingest-text` accepts a typed achievement
   ("Led the Data Science Club in 2024") with no file at all. Not every
   achievement has a certificate — club leadership, hackathon wins, and
@@ -67,6 +76,14 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
   returned all of it and `Upload.jsx` discarded it — the app looked identical
   to Phase 1. A third input is added alongside file-drop and URL: a text box
   for typing an achievement directly.
+- **GitHub results get their own card.** `GitHubCard.jsx` renders a repo as a
+  repo (stars, license, language mix, homepage) and a profile as a profile
+  (bio, repo list); `ResultCard.jsx` handles files, written responses, and
+  generic web pages. The two share primitives via `cardParts.jsx` rather than
+  a layout, so the pieces carrying rules — the category badge, the confidence
+  meter, the assumed-date flag — exist once. The raw scraped text moved into a
+  collapsed disclosure: it is still the only way to tell "the AI misread this"
+  from "the scraper got nothing", but it is no longer what every card ends on.
 
 Category colors live in `frontend/src/categories.js` — one source of truth, so
 the Phase 6 timeline and Phase 5 graph color a category the same way an upload
@@ -155,7 +172,7 @@ cd backend
 | ------ | ------------------------------- | ------------------------------------------------------- |
 | GET    | `/api/health`                   | Health check; reports whether an API key is configured   |
 | POST   | `/api/upload`                   | Multipart upload → extracted text + sha256 + categorization |
-| POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored |
+| POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored; GitHub repos/profiles also return a `details` object |
 | POST   | `/api/ingest-text`              | `{ "text": "..." }` → written response, categorized + stored |
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
@@ -180,8 +197,8 @@ verified even if the database is lost.
 
 ```bash
 cd backend
-pytest              # 147 tests, no network, ~11s
-pytest -m network   # 5 more that make real HTTP calls (no API quota, ~2s)
+pytest              # 228 tests, no network, ~22s
+pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 3 more that call the real Gemini API (needs a key, ~45s)
 ```
 
@@ -198,6 +215,7 @@ Tests run against a per-test tmp directory, so they never write to the real
 | `test_url_guard.py`      | SSRF guards — schemes, private/multicast addresses, redirect hops, size caps |
 | `test_ingest_fileless.py`| URL + written-response ingestion reaching SQLite            |
 | `test_dates.py`          | Repo creation dates, and the known-vs-assumed date flag    |
+| `test_github_ingest.py`  | Repo enrichment, profile scraping, URL routing, and the link-scheme guard |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key          |
 
@@ -218,3 +236,13 @@ fail. One finding from that pass is recorded in `test_ingest_fileless.py` — th
 route-level SSRF test stays green if you remove *either* validation layer,
 because `scrape_url` and `safe_get` both validate. Both are kept: `safe_get`
 covers redirect hops that `scrape_url` never sees.
+
+Phase 3's later additions were mutation-validated the same way — breaking the
+link-scheme allowlist, the reserved-path denylist, the fork exclusion, the
+unknown-user fallthrough, or the assumed-date flag each turns the matching test
+red. Two assertions were **hollow** when first written and are worth knowing
+about: the scheme-allowlist test was passing only because an unrelated
+`netloc` check rejected all its payloads, so it stayed green against a
+`javascript:`-only blocklist. It now includes `ftp:` and `gopher:` cases, which
+carry a host and can therefore only be rejected by the allowlist itself. A
+green run is not evidence; see the mutation-testing rule in `CLAUDE.md`.
