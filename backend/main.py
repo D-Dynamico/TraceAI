@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from db import database
-from routes import documents, upload
+from routes import documents, search, upload
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -22,6 +22,18 @@ logging.basicConfig(
 
 settings.ensure_dirs()
 database.init_db()
+
+# Bring the vector store in line with SQLite (the source of truth): a deleted or
+# corrupt data/chroma is rebuilt, a partial index is filled in. Cheap because
+# embeddings are local — but never let a store problem stop the app from booting.
+try:
+    from ai import embeddings
+
+    embeddings.ensure_synced()
+except Exception:
+    logging.getLogger(__name__).exception(
+        "Vector store sync failed on startup — search may be degraded."
+    )
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
@@ -39,6 +51,7 @@ app.add_middleware(
 
 app.include_router(upload.router)
 app.include_router(documents.router)
+app.include_router(search.router)
 
 
 @app.get("/api/health")

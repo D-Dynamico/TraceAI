@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 import storage
-from ai import categorizer
+from ai import categorizer, embeddings
 from config import settings
 from db import database
 from ingestion import file_parser, text_entry, url_scraper
@@ -105,6 +105,33 @@ class TextIngestResponse(BaseModel):
 def _preview(text: str, limit: int = 800) -> str:
     text = text.strip()
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+async def _index_document(
+    *, doc_id: str, title: str, raw_text: str, user_id: str = DEFAULT_USER
+) -> None:
+    """Embed a just-stored document into the vector store, best-effort.
+
+    Runs *after* the SQLite insert, never before: the row is the source of truth,
+    so a failure here loses nothing — the document is simply left unindexed until
+    the next startup sync (`embeddings.ensure_synced`) fills it in. `embedding_id`
+    is set only on success, so a NULL value reliably means "not yet in Chroma".
+
+    Off the event loop for CPU reasons (model inference), not rate limiting —
+    embeddings are local and free, unlike the Gemini call above.
+    """
+    try:
+        chunks = await run_in_threadpool(
+            embeddings.add_document,
+            doc_id=doc_id,
+            user_id=user_id,
+            title=title,
+            raw_text=raw_text,
+        )
+        if chunks:
+            await run_in_threadpool(database.set_embedding_id, doc_id, doc_id)
+    except Exception:
+        logger.exception("Embedding failed for %s — document left unindexed.", doc_id)
 
 
 def _to_response(result: Categorization, upload_date: str) -> CategorizationResponse:
@@ -228,6 +255,12 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
             detail="File was stored successfully but could not be indexed.",
         ) from exc
 
+    # Embed for semantic search. Best-effort: the row is already persisted, so a
+    # failure here leaves the document searchable-later, not lost.
+    await _index_document(
+        doc_id=doc_id, title=category_result.title, raw_text=result.text
+    )
+
     return ExtractionResponse(
         id=doc_id,
         filename=filename,
@@ -320,6 +353,10 @@ async def _categorize_and_store(
         raise HTTPException(
             status_code=500, detail="Content could not be indexed."
         ) from exc
+
+    # Fileless documents (URL / text entry) embed the same way — they have
+    # raw_text even without an original file. Best-effort, as above.
+    await _index_document(doc_id=doc_id, title=result.title, raw_text=text)
 
     return result, warnings, upload_date
 

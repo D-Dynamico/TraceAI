@@ -14,13 +14,15 @@ Two things every test gets for free:
 
 from __future__ import annotations
 
+import hashlib
 import io
+import math
 
 import pytest
 from fastapi.testclient import TestClient
 
 import storage
-from ai import categorizer
+from ai import categorizer, embeddings
 from config import settings
 from db import database
 from models.document import Categorization
@@ -31,15 +33,29 @@ PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presen
 
 @pytest.fixture(autouse=True)
 def isolated_storage(tmp_path, monkeypatch):
-    """Point uploads and the database at a per-test tmp directory."""
+    """Point uploads, the database, and the vector store at a per-test tmp dir.
+
+    `chroma_dir` matters as much as the others: without it every test that
+    ingests a document would write a real Chroma store into the repo's `data/`.
+    The embeddings module caches its client/collection in module globals, so
+    those are reset per test — otherwise a collection opened against one test's
+    tmp dir would leak into the next.
+    """
     uploads = tmp_path / "uploads"
     data = tmp_path / "data"
+    chroma = tmp_path / "chroma"
     uploads.mkdir()
     data.mkdir()
+    chroma.mkdir()
 
     monkeypatch.setattr(settings, "upload_dir", uploads)
     monkeypatch.setattr(settings, "data_dir", data)
     monkeypatch.setattr(settings, "db_path", data / "traceai.db")
+    monkeypatch.setattr(settings, "chroma_dir", chroma)
+
+    # Drop any store cached against a previous test's directory.
+    monkeypatch.setattr(embeddings, "_client", None)
+    monkeypatch.setattr(embeddings, "_collection", None)
 
     database.init_db()
     yield tmp_path
@@ -83,6 +99,33 @@ def stub_categorizer(request, monkeypatch, stub_result):
     import routes.upload as upload_route
 
     monkeypatch.setattr(upload_route.categorizer, "categorize", _fake)
+
+
+@pytest.fixture(autouse=True)
+def stub_embeddings(request, monkeypatch):
+    """Replace the sentence-transformer with a deterministic fake.
+
+    The real model is an ~80MB download and slow to load, neither of which the
+    offline suite should pay. `embed_texts` is the single choke point every
+    embedding flows through, so stubbing it alone covers add, query, and
+    reindex. Vectors are a normalized hash of the text: consistent in dimension
+    and per-text, enough to exercise the store's mechanics (filtering, dedup,
+    hydration). Ranking *quality* needs the real model — those tests opt in with
+    the `model` marker, which skips this stub.
+    """
+    if request.node.get_closest_marker("model"):
+        return
+
+    def _fake(texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for text in texts:
+            digest = hashlib.sha256(text.encode("utf-8")).digest()
+            raw = [b / 255.0 for b in digest[:16]]
+            norm = math.sqrt(sum(x * x for x in raw)) or 1.0
+            vectors.append([x / norm for x in raw])
+        return vectors
+
+    monkeypatch.setattr(embeddings, "embed_texts", _fake)
 
 
 @pytest.fixture

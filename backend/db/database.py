@@ -127,6 +127,20 @@ def insert_document(
             )
 
 
+def set_embedding_id(doc_id: str, embedding_id: str) -> None:
+    """Mark a document as indexed in the vector store.
+
+    Set only after `ai/embeddings.add_document` succeeds, so a NULL
+    `embedding_id` reliably means "not yet in Chroma" — which is exactly what
+    the startup sync in `ensure_synced` keys off to heal a partial index.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE documents SET embedding_id = ? WHERE id = ?",
+            (embedding_id, doc_id),
+        )
+
+
 # --- Reads ----------------------------------------------------------------
 
 
@@ -184,6 +198,21 @@ def list_documents(
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def documents_for_indexing() -> list[dict[str, Any]]:
+    """Every document with just the fields the vector index needs.
+
+    Unlike `list_documents`, this includes `raw_text` — it is what gets embedded
+    — and omits the display/date machinery. Used to (re)build the Chroma store
+    from SQLite, the source of truth, so a lost or corrupt vector store is fully
+    regenerable (see `ai/embeddings.py::reindex`).
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, user_id, title, raw_text FROM documents"
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def resolve_date(
