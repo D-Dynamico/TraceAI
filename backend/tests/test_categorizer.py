@@ -115,7 +115,7 @@ def test_confidence_is_clamped_to_unit_range(value, expected):
     ],
 )
 def test_fallback_infers_from_filename(filename, category, doc_type):
-    result = fallback_categorization(filename, "test")
+    result = fallback_categorization(filename, "no_text")
 
     assert result.category == category
     assert result.document_type == doc_type
@@ -123,7 +123,7 @@ def test_fallback_infers_from_filename(filename, category, doc_type):
 
 
 def test_fallback_extracts_a_year_from_the_filename():
-    assert fallback_categorization("cert_2023.pdf", "test").date == "2023"
+    assert fallback_categorization("cert_2023.pdf", "no_text").date == "2023"
 
 
 # --- degradation -----------------------------------------------------------
@@ -136,6 +136,9 @@ def test_missing_api_key_degrades_instead_of_raising(monkeypatch):
 
     assert result.confidence == 0.0
     assert result.category == "Certifications"
+    # Item B: a missing key is a structured, NON-retryable degradation.
+    assert result.degraded_reason == "no_api_key"
+    assert result.retryable is False
 
 
 def test_empty_text_skips_the_api_call(monkeypatch):
@@ -165,6 +168,9 @@ def test_api_failure_degrades_instead_of_raising(monkeypatch):
     # the sort of assertion that blocks a wording fix without catching a bug.
     assert result.summary and "filename" in result.summary.lower()
     assert result.category  # still usable, still lands in the database
+    # Item B: a 503 is transport-level and retryable.
+    assert result.degraded_reason == "unreachable"
+    assert result.retryable is True
 
 
 @pytest.mark.nostub

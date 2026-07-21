@@ -23,9 +23,10 @@ import json
 import logging
 import re
 import threading
-import time
 from pathlib import Path
 
+from ai import degradation
+from ai import gemini
 from config import settings
 from models.document import Categorization
 
@@ -74,31 +75,15 @@ Document text:
 """
 
 
-class _RateLimiter:
-    """Enforce a minimum interval between calls across threads.
+# The rate limiter and redaction are shared across every Gemini caller (the free
+# tier's budget is per-key, not per-module) — see ai/gemini.py. Referenced under
+# module-local names so tests can monkeypatch categorizer._rate_limiter and
+# categorizer._redact without reaching into another module.
+_rate_limiter = gemini.rate_limiter
+_redact = gemini.redact
 
-    FastAPI runs sync endpoints in a thread pool, so a multi-file upload can
-    hit this concurrently. The lock is held across the sleep, which serializes
-    callers — correct for a 10 RPM budget, where parallelism has no value.
-    """
-
-    def __init__(self, min_interval_seconds: float) -> None:
-        self._min_interval = min_interval_seconds
-        self._lock = threading.Lock()
-        self._last_call = 0.0
-
-    def wait(self) -> None:
-        with self._lock:
-            elapsed = time.monotonic() - self._last_call
-            delay = self._min_interval - elapsed
-            if delay > 0:
-                logger.debug("Rate limiter: sleeping %.2fs", delay)
-                time.sleep(delay)
-            self._last_call = time.monotonic()
-
-
-# 10 RPM free tier -> 6s spacing, plus headroom for clock skew.
-_rate_limiter = _RateLimiter(min_interval_seconds=6.5)
+# Classification wants consistency, not creativity.
+_GENERATION_CONFIG = {"response_mime_type": "application/json", "temperature": 0.1}
 
 _model = None
 _model_lock = threading.Lock()
@@ -109,30 +94,15 @@ class CategorizationError(RuntimeError):
 
 
 def is_configured() -> bool:
-    return bool(settings.gemini_api_key)
-
-
-def _redact(message: object) -> str:
-    """Strip the API key out of text before it reaches a log.
-
-    SDK errors can carry the failing request URL, and on the REST transport that
-    URL contains `?key=<api key>`. Logs get copied into issues and CI output, so
-    the key is removed here rather than trusting every error path not to include
-    it.
-    """
-    text = str(message)
-    key = settings.gemini_api_key
-    if key and key in text:
-        text = text.replace(key, "***REDACTED***")
-    # Also catch a key embedded in a query string that differs from ours.
-    return re.sub(r"(key=)[A-Za-z0-9_\-]{8,}", r"\1***REDACTED***", text)
+    return gemini.is_configured()
 
 
 def _get_model():
-    """Lazily build and cache the Gemini client.
+    """Lazily build and cache this module's Gemini client.
 
     Deferred so that importing this module (and thus starting the app) does not
-    require a valid API key.
+    require a valid API key. Key configuration is shared (`gemini.build_model`);
+    the model instance is this module's own, with the classification config.
     """
     global _model
     if _model is not None:
@@ -142,18 +112,7 @@ def _get_model():
             return _model
         if not is_configured():
             raise CategorizationError("GEMINI_API_KEY is not set.")
-        import google.generativeai as genai
-
-        genai.configure(api_key=settings.gemini_api_key)
-        _model = genai.GenerativeModel(
-            settings.gemini_model,
-            generation_config={
-                "response_mime_type": "application/json",
-                # Classification wants consistency, not creativity.
-                "temperature": 0.1,
-            },
-        )
-        logger.info("Gemini client initialized (model=%s)", settings.gemini_model)
+        _model = gemini.build_model(_GENERATION_CONFIG)
         return _model
 
 
@@ -189,14 +148,21 @@ def _parse_response(text: str) -> dict:
     return parsed
 
 
-def fallback_categorization(filename: str, reason: str) -> Categorization:
+def fallback_categorization(
+    filename: str, reason: degradation.DegradedReason
+) -> Categorization:
     """Best-effort classification without the LLM.
 
     Filenames in this domain are unusually informative ("python_certificate.pdf",
     "internship_offer_letter.pdf"), so keyword matching recovers a usable
     category often enough to be worth doing. confidence stays 0.0 to mark the
     result as unverified.
+
+    `reason` is a structured code (deferred item B); the human prose shown on the
+    card and the `retryable` flag both come from it, so the two can never
+    disagree about whether trying again will help.
     """
+    degraded = degradation.from_reason(reason)
     stem = Path(filename).stem.replace("_", " ").replace("-", " ")
     lowered = stem.lower()
 
@@ -228,34 +194,21 @@ def fallback_categorization(filename: str, reason: str) -> Categorization:
         # sentence a free-tier rate limit produced, which reads as a broken
         # site rather than as "wait a moment" — the one failure here that
         # actually resolves itself.
-        summary=f"Not categorized yet — {reason}. Details below came from the filename.",
+        summary=f"Not categorized yet — {degraded.message}. Details below came from the filename.",
         confidence=0.0,
+        degraded_reason=degraded.reason,
+        retryable=degraded.retryable,
     )
 
 
 def _human_reason(exc: Exception) -> str:
-    """Turn an SDK exception into something worth showing on a card.
+    """The card-facing prose for an SDK failure — the classified reason's message.
 
-    Only one distinction matters to the reader: will this fix itself? A free
-    tier of 10 RPM / 1500 RPD means quota exhaustion is the *expected* failure
-    during a batch upload, and it clears on its own — saying so is the
-    difference between "wait a moment" and "this site is broken".
-
-    Matched on the exception name and message rather than by importing
-    google.api_core: the SDK has moved these classes before, and a categorizer
-    that crashes while explaining a failure would defeat the never-raises
-    guarantee this module exists to provide.
+    Kept as a named helper because the reason→message mapping (does this fix
+    itself?) is the thing worth testing directly; `categorize` now degrades via
+    the structured code, but this preserves the readable-message guarantee.
     """
-    name = type(exc).__name__
-    text = f"{name} {exc}".lower()
-    if "resourceexhausted" in name.lower() or "429" in text or "quota" in text:
-        return "the free AI quota is used up for now, so try again shortly"
-    # "unavailable" deliberately does NOT belong here — it is gRPC's
-    # service-unavailable status (a 503), not a timeout, and lumping the two
-    # together told a caller their request was slow when it was refused.
-    if "deadline" in text or "timeout" in text or "timed out" in text:
-        return "the AI service did not respond in time"
-    return "the AI service could not be reached"
+    return degradation.from_reason(degradation.classify_exception(exc)).message
 
 
 def categorize(text: str, filename: str = "") -> Categorization:
@@ -268,11 +221,11 @@ def categorize(text: str, filename: str = "") -> Categorization:
 
     if len(stripped) < MIN_INPUT_CHARS:
         logger.info("Too little text to categorize %s (%d chars).", filename, len(stripped))
-        return fallback_categorization(filename, "document had no extractable text")
+        return fallback_categorization(filename, "no_text")
 
     if not is_configured():
         logger.warning("GEMINI_API_KEY not set — falling back for %s.", filename)
-        return fallback_categorization(filename, "no API key configured")
+        return fallback_categorization(filename, "no_api_key")
 
     truncated = stripped[:MAX_INPUT_CHARS]
     if len(stripped) > MAX_INPUT_CHARS:
@@ -288,19 +241,19 @@ def categorize(text: str, filename: str = "") -> Categorization:
         result = Categorization.model_validate(payload)
     except CategorizationError as exc:
         logger.warning("Categorization failed for %s: %s", filename, _redact(exc))
-        return fallback_categorization(filename, "AI response could not be read")
+        return fallback_categorization(filename, "unreadable_response")
     except Exception as exc:
         # Network errors, quota exhaustion, safety blocks, SDK changes.
         logger.warning(
             "Gemini call failed for %s: %s: %s",
             filename, type(exc).__name__, _redact(exc),
         )
-        return fallback_categorization(filename, _human_reason(exc))
+        return fallback_categorization(filename, degradation.classify_exception(exc))
 
     # A model that returns nothing usable is a failure even when it parses.
     if not result.title and not result.summary:
         logger.warning("Empty categorization for %s — using fallback.", filename)
-        return fallback_categorization(filename, "AI returned an empty result")
+        return fallback_categorization(filename, "unreadable_response")
 
     if not result.title:
         result.title = Path(filename).stem.replace("_", " ").title() or "Untitled"

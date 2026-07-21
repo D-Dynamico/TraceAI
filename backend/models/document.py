@@ -50,6 +50,12 @@ class Categorization(BaseModel):
     people: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     confidence: float = 0.0
+    # Set only on a degraded result (deferred item B). None on success. The code
+    # says *why* it degraded and `retryable` whether trying again can help, so a
+    # client can behave rather than parse the summary prose. Kept as a plain str
+    # (not the Literal) to avoid the models layer importing ai/degradation.
+    degraded_reason: str | None = None
+    retryable: bool = False
 
     @field_validator("document_type", mode="before")
     @classmethod

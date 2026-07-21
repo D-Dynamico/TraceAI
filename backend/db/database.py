@@ -127,6 +127,68 @@ def insert_document(
             )
 
 
+def replace_career_paths(paths: list[dict[str, Any]]) -> None:
+    """Persist the inferred career paths, replacing any previous set.
+
+    Inference runs over the whole profile at once, so its output *is* the
+    complete set — the table is cleared and rewritten rather than appended to,
+    which keeps a re-run from stacking stale trajectories. Supporting document
+    ids and skill gaps are stored as JSON in the existing `evidence` /
+    `skill_gaps` columns (persisted because the Gemini call that produced them
+    is not free to repeat on every graph read).
+
+    Note: `career_paths` has no `user_id` column — the graph is single-user
+    today (auth is a stretch goal), so paths are global.
+    """
+    with get_connection() as conn:
+        conn.execute("DELETE FROM career_paths")
+        conn.executemany(
+            """
+            INSERT INTO career_paths (id, title, match_score, evidence, skill_gaps)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    p["id"],
+                    p["title"],
+                    p.get("match_score"),
+                    json.dumps({"doc_ids": p.get("evidence_doc_ids") or []}),
+                    json.dumps(p.get("skill_gaps") or []),
+                )
+                for p in paths
+            ],
+        )
+
+
+def list_career_paths() -> list[dict[str, Any]]:
+    """Read persisted career paths, with evidence ids and skill gaps parsed."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, title, match_score, evidence, skill_gaps FROM career_paths"
+        ).fetchall()
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+        except json.JSONDecodeError:
+            evidence = {}
+        try:
+            gaps = json.loads(row["skill_gaps"]) if row["skill_gaps"] else []
+        except json.JSONDecodeError:
+            gaps = []
+        out.append(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "match_score": row["match_score"],
+                "evidence_doc_ids": evidence.get("doc_ids", []),
+                "skill_gaps": gaps,
+            }
+        )
+    return out
+
+
 def set_embedding_id(doc_id: str, embedding_id: str) -> None:
     """Mark a document as indexed in the vector store.
 
@@ -198,6 +260,44 @@ def list_documents(
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def documents_with_skills(user_id: str = "demo") -> list[dict[str, Any]]:
+    """Every document with its skill entities attached, for the relationship graph.
+
+    Two queries, not N+1: one for the documents, one for all their skill rows,
+    joined in Python. `raw_text` is included because Module 3's similarity layer
+    embeds it; the set is bounded by the profile size, not by corpus scale.
+    """
+    with get_connection() as conn:
+        docs = conn.execute(
+            "SELECT id, category, title, raw_text FROM documents WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+        skill_rows = conn.execute(
+            """
+            SELECT e.document_id AS doc_id, e.entity_value AS value
+            FROM entities e
+            JOIN documents d ON d.id = e.document_id
+            WHERE d.user_id = ? AND e.entity_type = 'skill'
+            """,
+            (user_id,),
+        ).fetchall()
+
+    skills_by_doc: dict[str, list[str]] = {}
+    for row in skill_rows:
+        skills_by_doc.setdefault(row["doc_id"], []).append(row["value"])
+
+    return [
+        {
+            "id": d["id"],
+            "category": d["category"],
+            "title": d["title"],
+            "raw_text": d["raw_text"],
+            "skills": skills_by_doc.get(d["id"], []),
+        }
+        for d in docs
+    ]
 
 
 def documents_for_indexing() -> list[dict[str, Any]]:

@@ -11,9 +11,11 @@ stubbed suite would keep passing through all three.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
-from ai import categorizer
+from ai import career_path, categorizer
 from conftest import upload
 from db import database
 
@@ -79,3 +81,32 @@ def test_full_upload_pipeline_against_the_live_api(client):
     assert sorted(row["skills"]) == sorted(cat["skills"])
 
     assert client.get(f"/api/documents/{doc_id}/verify").json()["verified"] is True
+
+
+def test_career_path_inference_against_the_live_api(client):
+    """A coherent profile -> live Gemini -> parsed, index-mapped career paths."""
+    profile = [
+        ("Certifications", ["Python", "scikit-learn"], "Python ML Certificate"),
+        ("Projects", ["Python", "pandas"], "ML Pipeline Project"),
+        ("Internships", ["Python", "SQL"], "Data Automation Intern at XYZ Corp"),
+    ]
+    for category, skills, title in profile:
+        database.insert_document(
+            doc_id=uuid.uuid4().hex, user_id="demo", filename=title,
+            original_path="/x", file_type="pdf", checksum="c",
+            raw_text=f"{title}. Demonstrated skills: {', '.join(skills)}.",
+            upload_date="2025-01-01 00:00:00", category=category, title=title,
+            skills=skills,
+        )
+
+    result = career_path.infer("demo")
+
+    assert result.degraded_reason is None, result.degraded_reason
+    assert result.paths, "live inference returned no paths for a clear profile"
+    path = result.paths[0]
+    assert path.title.strip()
+    assert 0.0 <= path.match_score <= 1.0
+    known = {d["id"] for d in database.list_documents("demo")}
+    assert all(doc_id in known for doc_id in path.evidence_doc_ids), (
+        "evidence must map to real documents, not hallucinated indices"
+    )

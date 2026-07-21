@@ -52,6 +52,12 @@ class CategorizationResponse(BaseModel):
     # check it replaces was doing.
     effective_date: str | None = None
     date_source: str = "assumed"  # "extracted" | "assumed"
+    # Structured degradation (deferred item B). None on a normal result; on a
+    # degraded one, the reason code and whether a retry can help — so the card
+    # can offer "try again" for a quota failure but not for a missing key,
+    # instead of pattern-matching the summary prose.
+    degraded_reason: str | None = None
+    retryable: bool = False
 
 
 class ExtractionResponse(BaseModel):
