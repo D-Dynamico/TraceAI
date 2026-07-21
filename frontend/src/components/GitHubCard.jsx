@@ -13,6 +13,8 @@
 // rendered in neutral ink — inventing a second color scale for languages would
 // collide with the validated category hues.
 
+import { useState } from "react";
+import { recategorize } from "../api/client";
 import {
   AssumedDateNotice,
   CardShell,
@@ -208,9 +210,29 @@ function ProfileFacts({ details }) {
 }
 
 export default function GitHubCard({ result }) {
-  const cat = result.categorization;
+  const [override, setOverride] = useState(null);
+  const [retrying, setRetrying] = useState(false);
+  const cat = override || result.categorization;
   const details = result.details || {};
   const isProfile = details.kind === "profile";
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      setOverride(await recategorize(result.id));
+    } catch {
+      // no-op — the degraded card stays as it was.
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  // Drop the stale "unverified — review suggested" warning after a successful
+  // retry; the confidence meter now carries that signal (see ResultCard).
+  const retried = override && !cat.degraded_reason && (cat.confidence ?? 0) > 0;
+  const warnings = retried
+    ? (result.warnings || []).filter((w) => !/review suggested/i.test(w))
+    : result.warnings;
 
   const heading = cat?.title || result.title || result.url;
   const subtitle = isProfile
@@ -243,7 +265,11 @@ export default function GitHubCard({ result }) {
       {cat && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           {cat.degraded_reason ? (
-            <DegradedNotice cat={cat} />
+            <DegradedNotice
+              cat={cat}
+              onRetry={result.id ? handleRetry : undefined}
+              retrying={retrying}
+            />
           ) : (
             <Confidence value={cat.confidence} />
           )}
@@ -277,7 +303,7 @@ export default function GitHubCard({ result }) {
         from {result.url}
       </p>
 
-      <Warnings items={result.warnings} />
+      <Warnings items={warnings} />
       <ExtractedText
         text={result.text_preview}
         meta={`${result.char_count} chars`}

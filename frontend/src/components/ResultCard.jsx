@@ -5,6 +5,8 @@
 // certificate. Everything those two cards genuinely share lives in
 // cardParts.jsx, so what differs here is arrangement, not logic.
 
+import { useState } from "react";
+import { recategorize } from "../api/client";
 import {
   AssumedDateNotice,
   CardShell,
@@ -21,7 +23,32 @@ export default function ResultCard({ result }) {
   const isUrl = result.kind === "url";
   const isText = result.kind === "text";
   const isFile = !isUrl && !isText;
-  const cat = result.categorization;
+
+  // A successful retry replaces the shown categorization in place (item B). The
+  // parent's session list stays as-is; the card the user is looking at updates.
+  const [override, setOverride] = useState(null);
+  const [retrying, setRetrying] = useState(false);
+  const cat = override || result.categorization;
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      setOverride(await recategorize(result.id));
+    } catch {
+      // categorize() never raises server-side; a transport error here just
+      // leaves the degraded card as it was.
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  // After a successful retry the confidence meter tells the story, so the stale
+  // "unverified — review suggested" warning from the original degraded ingest
+  // must not linger. Only that warning is dropped; extraction warnings stay.
+  const retried = override && !cat.degraded_reason && (cat.confidence ?? 0) > 0;
+  const warnings = retried
+    ? (result.warnings || []).filter((w) => !/review suggested/i.test(w))
+    : result.warnings;
 
   // Gemini's title is the useful name; the filename/URL becomes provenance.
   const heading = cat?.title || (isUrl ? result.title || result.url : result.filename);
@@ -68,7 +95,11 @@ export default function ResultCard({ result }) {
       {cat && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           {cat.degraded_reason ? (
-            <DegradedNotice cat={cat} />
+            <DegradedNotice
+              cat={cat}
+              onRetry={result.id ? handleRetry : undefined}
+              retrying={retrying}
+            />
           ) : (
             <Confidence value={cat.confidence} />
           )}
@@ -100,7 +131,7 @@ export default function ResultCard({ result }) {
         </p>
       )}
 
-      <Warnings items={result.warnings} />
+      <Warnings items={warnings} />
       <ExtractedText text={result.text_preview} meta={textMeta} />
     </CardShell>
   );

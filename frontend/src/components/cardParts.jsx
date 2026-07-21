@@ -141,7 +141,7 @@ const DEGRADED_COPY = {
  * the generic confidence-0 "unverified" note, which could not tell the two
  * apart.
  */
-export function DegradedNotice({ cat }) {
+export function DegradedNotice({ cat, onRetry, retrying }) {
   const reason = cat?.degraded_reason;
   if (!reason) return null;
   const text = DEGRADED_COPY[reason] || "Automatic categorization was unavailable.";
@@ -155,8 +155,20 @@ export function DegradedNotice({ cat }) {
       <span aria-hidden="true">{retryable ? "⚠" : "○"}</span>
       {text}{" "}
       {retryable
-        ? "This usually clears — try again shortly."
+        ? "This usually clears."
         : "Details below came from the filename."}
+      {/* A retry only makes sense for a self-clearing failure, and only when the
+          card knows how to re-run (onRetry). It re-categorizes the preserved
+          text server-side — no re-upload. */}
+      {retryable && onRetry && (
+        <button
+          onClick={onRetry}
+          disabled={retrying}
+          className="ml-1 rounded border border-amber-300 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"
+        >
+          {retrying ? "Retrying…" : "Try again"}
+        </button>
+      )}
     </span>
   );
 }

@@ -283,6 +283,47 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
     )
 
 
+@router.post("/documents/{doc_id}/recategorize", response_model=CategorizationResponse)
+async def recategorize(doc_id: str) -> CategorizationResponse:
+    """Re-run categorization over a document's preserved text (the retry path).
+
+    The UI offers this only on a *retryable* degradation (a quota wall, a
+    timeout) via the item B contract — a re-run when the quota has refilled
+    turns a filename-based fallback into a real classification without a
+    re-upload. categorize() still never raises, so a retry that also fails just
+    returns another degraded result with its reason; the original is untouched.
+    """
+    doc = await run_in_threadpool(database.get_document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
+
+    raw_text = doc.get("raw_text") or ""
+    filename = doc.get("filename") or ""
+    result = await run_in_threadpool(categorizer.categorize, raw_text, filename)
+
+    await run_in_threadpool(
+        database.update_categorization,
+        doc_id,
+        document_type=result.document_type,
+        category=result.category,
+        title=result.title,
+        summary=result.summary,
+        extracted_date=result.date,
+        confidence=result.confidence,
+        skills=result.skills,
+        organizations=result.organizations,
+        people=result.people,
+        tags=result.tags,
+    )
+
+    # The title is prepended to each embedded chunk, so a changed title means the
+    # vectors are stale — re-index. Best-effort, as on the ingest paths.
+    await _index_document(doc_id=doc_id, title=result.title, raw_text=raw_text)
+
+    upload_date = doc.get("upload_date") or storage.now_iso()
+    return _to_response(result, upload_date)
+
+
 async def _categorize_and_store(
     *,
     doc_id: str,

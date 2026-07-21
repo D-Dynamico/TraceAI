@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 
 from conftest import DOCX_MIME, make_docx, upload
 
@@ -109,6 +110,36 @@ def test_category_filter(client, stored_doc):
 
 def test_detail_404_for_unknown_id(client):
     assert client.get("/api/documents/" + "0" * 32).status_code == 404
+
+
+def test_recategorize_reruns_and_replaces_metadata(client, stub_result):
+    """The item B retry path: re-run over preserved text, update in place.
+
+    Seed a degraded document (confidence 0, stale skills), then recategorize —
+    the stubbed categorizer returns a real result, and the row's category,
+    confidence, and entity rows are all overwritten.
+    """
+    doc_id = uuid.uuid4().hex
+    database.insert_document(
+        doc_id=doc_id, user_id="demo", filename="cert.pdf", original_path="/x",
+        file_type="pdf", checksum="c", raw_text="A Python certificate from Coursera.",
+        upload_date="2025-01-01 00:00:00", category="Uncategorized",
+        confidence=0.0, skills=["StaleSkill"],
+    )
+
+    resp = client.post(f"/api/documents/{doc_id}/recategorize")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["category"] == stub_result.category
+
+    row = database.get_document(doc_id)
+    assert row["category"] == stub_result.category
+    assert row["confidence"] == stub_result.confidence
+    assert sorted(row["skills"]) == sorted(stub_result.skills)
+    assert "StaleSkill" not in row["skills"], "old entities must be replaced"
+
+
+def test_recategorize_404_for_unknown_id(client):
+    assert client.post("/api/documents/" + "0" * 32 + "/recategorize").status_code == 404
 
 
 def test_failed_index_still_preserves_the_original(client, monkeypatch):

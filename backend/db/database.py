@@ -189,6 +189,64 @@ def list_career_paths() -> list[dict[str, Any]]:
     return out
 
 
+def update_categorization(
+    doc_id: str,
+    *,
+    document_type: str | None,
+    category: str | None,
+    title: str | None,
+    summary: str | None,
+    extracted_date: str | None,
+    confidence: float | None,
+    skills: list[str] | None = None,
+    organizations: list[str] | None = None,
+    people: list[str] | None = None,
+    tags: list[str] | None = None,
+) -> None:
+    """Overwrite a document's AI metadata after a re-run (the retry path).
+
+    Updates the categorization columns and *replaces* the entity/tag rows —
+    Module 3 joins on those, so a re-categorization that changed the skills must
+    not leave the old ones behind. The original file, checksum, and raw_text are
+    never touched: re-categorizing re-reads the same preserved text, it does not
+    alter it (see CLAUDE.md — originals are never modified).
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE documents
+            SET document_type = ?, category = ?, title = ?, summary = ?,
+                extracted_date = ?, confidence = ?
+            WHERE id = ?
+            """,
+            (document_type, category, title, summary, extracted_date, confidence, doc_id),
+        )
+        conn.execute("DELETE FROM entities WHERE document_id = ?", (doc_id,))
+        conn.execute("DELETE FROM tags WHERE document_id = ?", (doc_id,))
+
+        entity_rows = [
+            (uuid.uuid4().hex, doc_id, entity_type, value)
+            for entity_type, values in (
+                ("skill", skills or []),
+                ("organization", organizations or []),
+                ("person", people or []),
+            )
+            for value in values
+            if value and value.strip()
+        ]
+        if entity_rows:
+            conn.executemany(
+                "INSERT INTO entities (id, document_id, entity_type, entity_value)"
+                " VALUES (?, ?, ?, ?)",
+                entity_rows,
+            )
+        tag_rows = [(doc_id, tag.strip()) for tag in (tags or []) if tag and tag.strip()]
+        if tag_rows:
+            conn.executemany(
+                "INSERT INTO tags (document_id, tag) VALUES (?, ?)", tag_rows
+            )
+
+
 def set_embedding_id(doc_id: str, embedding_id: str) -> None:
     """Mark a document as indexed in the vector store.
 

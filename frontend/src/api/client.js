@@ -54,6 +54,11 @@ export async function getDocument(id) {
   return handle(res);
 }
 
+export async function recategorize(id) {
+  const res = await fetch(`/api/documents/${id}/recategorize`, { method: "POST" });
+  return handle(res);
+}
+
 export async function health() {
   const res = await fetch("/api/health");
   return handle(res);
