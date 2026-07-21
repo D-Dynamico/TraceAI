@@ -12,8 +12,9 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 
 - ✅ Phase 1 — Project setup, file upload, text extraction
 - ✅ Phase 2 — Gemini categorization + SQLite storage
-- ✅ **Phase 3 — URL ingestion + written-response input** (current)
-- ⬜ Phase 4+ — Embeddings, relationship graph, career paths, timeline, RAG
+- ✅ Phase 3 — URL ingestion + written-response input
+- ✅ **Phase 4 — Embeddings + ChromaDB + semantic search** (current)
+- ⬜ Phase 5+ — relationship graph, career paths, timeline, RAG
 
 ### Phase 1 capabilities
 - Upload PDF / DOCX / PPTX / TXT / images.
@@ -90,6 +91,33 @@ the Phase 6 timeline and Phase 5 graph color a category the same way an upload
 card does. The hues follow plan.md §4 Module 4; the exact steps come from a
 validated categorical palette rather than taste, and the file records the
 validator results and the two candidate orderings that failed.
+
+### Phase 4 capabilities
+
+- **Semantic search.** `POST /api/search` finds documents by meaning, not
+  keywords. Each document's `raw_text` is chunked (~900-char overlapping
+  windows, title prepended) and embedded with `sentence-transformers`
+  (all-MiniLM-L6-v2) into ChromaDB. Embedding runs locally on CPU, so unlike
+  the Gemini calls it is free and **not** rate-limited.
+- **Instant filters, semantic fallback.** A deterministic router
+  (`ai/query_router.py`) answers "show all my certificates" or "my latest
+  resume" straight from SQLite — no embedding, no Gemini, no latency — and sends
+  only genuine question-shaped queries ("how does my cert relate to my
+  internship?") to vector search. This keeps the search screen fast and reserves
+  scarce Gemini quota for the RAG answer card (Phase 7). The plan's Path 3 used
+  Gemini to *parse* every query; that shares the categorizer's rate-limiter lane
+  and would stall a search issued right after an upload, so query understanding
+  is done here deterministically and Gemini is reserved for answer synthesis.
+- **Every result links to its original.** A hit is hydrated from SQLite (the
+  source of truth) and carries its category, date, and a `has_original` flag — a
+  file to download, or the source URL / text for a fileless document. The vector
+  store decides relevance; the database decides what exists.
+- **SQLite is the source of truth; Chroma is rebuildable.** Embeddings are
+  derived, never authoritative. The store syncs to SQLite on startup, fills a
+  partial index incrementally, and a deleted or corrupt `data/chroma/` is fully
+  rebuilt from `raw_text` — which was preserved intact for exactly this.
+- **Isolation built in.** Vector queries filter by `user_id`, so results cannot
+  cross users once multi-user auth lands. Enforced in code and mutation-tested.
 
 ### Original Format Preservation
 
@@ -174,6 +202,7 @@ cd backend
 | POST   | `/api/upload`                   | Multipart upload → extracted text + sha256 + categorization |
 | POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored; GitHub repos/profiles also return a `details` object |
 | POST   | `/api/ingest-text`              | `{ "text": "..." }` → written response, categorized + stored |
+| POST   | `/api/search`                   | `{ "query": "...", "k": 5 }` → routed to a SQL filter or semantic vector search; ranked source documents |
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
 | GET    | `/api/documents/{id}/download`  | Original file, integrity-verified                       |
@@ -186,10 +215,13 @@ cd backend
 | `uploads/{user_id}/`         | Originals, byte-for-byte unchanged                      |
 | `uploads/.../{f}.meta.json`  | Sidecar — on-disk source of truth for integrity         |
 | `data/traceai.db`            | SQLite — queryable metadata, entities, tags             |
+| `data/chroma/`               | ChromaDB — document embeddings for semantic search (derived; rebuildable from SQLite) |
 
 The sidecar and the database are written from the same upload, deliberately
 duplicating checksum and extraction data: an original plus its sidecar can be
-verified even if the database is lost.
+verified even if the database is lost. The vector store is the one exception to
+this belt-and-braces rule — it holds nothing that is not regenerable from
+`raw_text` in SQLite, so it is treated as a cache, not a source of truth.
 
 ---
 
@@ -197,13 +229,17 @@ verified even if the database is lost.
 
 ```bash
 cd backend
-pytest              # 228 tests, no network, ~22s
+pytest              # 263 tests, no network, ~1 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 3 more that call the real Gemini API (needs a key, ~45s)
+pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
 ```
 
 Tests run against a per-test tmp directory, so they never write to the real
-`uploads/` or `data/traceai.db`.
+`uploads/`, `data/traceai.db`, or `data/chroma/`. Embeddings are stubbed with
+deterministic vectors by default; the `model` tests opt into the real
+sentence-transformer to check its dimension and that a relevant document
+actually ranks first.
 
 | File                     | Covers                                                    |
 | ------------------------ | --------------------------------------------------------- |
@@ -216,6 +252,8 @@ Tests run against a per-test tmp directory, so they never write to the real
 | `test_ingest_fileless.py`| URL + written-response ingestion reaching SQLite            |
 | `test_dates.py`          | Repo creation dates, and the known-vs-assumed date flag    |
 | `test_github_ingest.py`  | Repo enrichment, profile scraping, URL routing, and the link-scheme guard |
+| `test_embeddings.py`     | Chunking, add/query/delete, multi-chunk dedup, **user_id isolation**, rebuild-from-SQLite |
+| `test_search.py`         | Query routing (filter vs semantic) and the `/api/search` endpoint |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key          |
 
@@ -246,3 +284,8 @@ about: the scheme-allowlist test was passing only because an unrelated
 `javascript:`-only blocklist. It now includes `ftp:` and `gopher:` cases, which
 carry a host and can therefore only be rejected by the allowlist itself. A
 green run is not evidence; see the mutation-testing rule in `CLAUDE.md`.
+
+Phase 4 added one assertion to that set: the vector store's `user_id` filter.
+Dropping `where={"user_id": ...}` in `embeddings.query` makes another user's
+document leak into search results and turns `test_query_is_filtered_by_user_id`
+red — verified by mutation before the code was committed.
