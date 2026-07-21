@@ -84,7 +84,27 @@ touched.
 
 ---
 
-## Item B — no structured reason for a degraded categorization
+## Item B — no structured reason for a degraded categorization — RESOLVED (Phase 5)
+
+**Resolved** in Phase 5, when career-path inference (`ai/career_path.py`) became
+the second Gemini caller — the trigger this note named. The contract now lives in
+`ai/degradation.py`:
+
+- `DegradedReason` is a `Literal["quota","timeout","unreachable","no_api_key",
+  "unreadable_response","no_text"]` and each maps, in one table, to a `retryable`
+  flag plus card prose. So "does trying again help?" is decided once, not
+  re-derived per caller.
+- `Categorization` carries `degraded_reason` + `retryable` (null / False on
+  success); `categorizer.fallback_categorization` sets them, and
+  `CategorizationResponse` surfaces them so a client can behave — offer a retry
+  on `quota` but not on `no_api_key` — instead of pattern-matching the summary.
+- Both Gemini callers degrade through this one contract: the categorizer's
+  fallback and `career_path.infer` (which returns no paths plus a reason rather
+  than raising).
+
+The sketch below matched what shipped. The original analysis is kept for the record.
+
+---
 
 **Observed:** when the Gemini free tier runs out, every card said
 

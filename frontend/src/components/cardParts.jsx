@@ -121,6 +121,46 @@ export function AssumedDateNotice({ cat }) {
   );
 }
 
+// Card copy per degraded reason (deferred item B). The backend sends a reason
+// *code* and a `retryable` flag precisely so the client can behave rather than
+// parse prose — this is the one place that turns the code into words.
+const DEGRADED_COPY = {
+  quota: "The free AI quota is used up for now.",
+  timeout: "The AI service didn’t respond in time.",
+  unreachable: "The AI service couldn’t be reached.",
+  no_api_key: "Automatic categorization is off — no API key is configured.",
+  unreadable_response: "The AI response couldn’t be read.",
+  no_text: "No text could be read from this document.",
+};
+
+/** A degraded categorization, rendered from the structured reason (item B).
+ *
+ * Behaves on `retryable`, not on the wording: a failure that clears itself (a
+ * quota wall, a timeout) is amber and says so; a terminal one (no key, no text)
+ * is muted and points at the filename-based details instead. This supersedes
+ * the generic confidence-0 "unverified" note, which could not tell the two
+ * apart.
+ */
+export function DegradedNotice({ cat }) {
+  const reason = cat?.degraded_reason;
+  if (!reason) return null;
+  const text = DEGRADED_COPY[reason] || "Automatic categorization was unavailable.";
+  const retryable = Boolean(cat.retryable);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs ${
+        retryable ? "text-amber-700" : "text-slate-500"
+      }`}
+    >
+      <span aria-hidden="true">{retryable ? "⚠" : "○"}</span>
+      {text}{" "}
+      {retryable
+        ? "This usually clears — try again shortly."
+        : "Details below came from the filename."}
+    </span>
+  );
+}
+
 /** Warnings from scraping, extraction, or categorization. */
 export function Warnings({ items }) {
   if (!items?.length) return null;

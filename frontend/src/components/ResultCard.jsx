@@ -10,6 +10,7 @@ import {
   CardShell,
   CategoryBadge,
   Confidence,
+  DegradedNotice,
   EntityChips,
   ExtractedText,
   knownDate,
@@ -66,7 +67,11 @@ export default function ResultCard({ result }) {
 
       {cat && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          <Confidence value={cat.confidence} />
+          {cat.degraded_reason ? (
+            <DegradedNotice cat={cat} />
+          ) : (
+            <Confidence value={cat.confidence} />
+          )}
           <AssumedDateNotice cat={cat} />
         </div>
       )}

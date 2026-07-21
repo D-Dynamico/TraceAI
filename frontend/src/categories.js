@@ -51,6 +51,19 @@ export function categoryColor(category) {
   return CATEGORY_COLORS[category] || NEUTRAL;
 }
 
+// Career Path (knowledge graph, plan.md §6 View 3) is a node *type*, not a
+// category, and it deliberately does NOT get a 7th categorical hue. The palette
+// validator was run with the six category hues plus every plausible candidate
+// (rose, magenta, teal, orange, deep purple) under --pairs all: each FAILED —
+// either normal-vision ΔE < 15 against red/blue, or a CVD collision with violet
+// (#a21caf↔violet ΔE 2.1) or green. The six categories saturate the usable hue
+// space on white, so a 7th categorical hue cannot pass. Per the dataviz rule for
+// exactly this case, Career Path is encoded compositely instead: a reserved dark
+// slate (achromatic — reads as "a different kind of thing", not a category),
+// plus a larger node, right-side placement, and a mandatory title + match-%
+// label. Identity never rests on this color alone.
+export const CAREER_PATH_COLOR = "#334155";
+
 // Sequential blue ramp, used for the confidence meter. Track is the near-zero
 // step; fill is the same hue stepped dark enough to read on white.
 export const METER_TRACK = "#cde2fb";
