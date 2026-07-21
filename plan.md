@@ -35,7 +35,7 @@ The brief states this twice, so it is treated as a hard guarantee:
 | OCR              | pytesseract + pdf2image (fallback for scans)           |
 | Vision           | Gemini 3 Flash Vision (free) — for scanned docs/images |
 | File Parsing     | PyMuPDF, python-docx, python-pptx                      |
-| URL Scraping     | requests, BeautifulSoup4, PyGithub                     |
+| URL Scraping     | requests, BeautifulSoup4 (GitHub REST API, called direct) |
 | Graph Viz        | react-force-graph / D3.js                              |
 | Timeline         | Custom React component                                 |
 | File Storage     | Local filesystem (original files preserved)            |
@@ -119,8 +119,15 @@ The brief states this twice, so it is treated as a hard guarantee:
 **Pipeline — URL Inputs:**
 1. User pastes a URL
 2. Backend detects URL type:
-   - **GitHub** → PyGithub API (free, 60 req/hr unauthenticated, 5000 with free token)
-     - Fetches: repo name, description, languages, topics, README, commit history
+   - **GitHub repo** → GitHub REST API, called directly (free, 60 req/hr unauthenticated)
+     - Fetches: description, language breakdown, topics, README, stars, forks,
+       license, and creation + last-push dates
+     - Uses raw `requests` through `url_guard`, **not** PyGithub — PyGithub
+       issues its own HTTP and would bypass the SSRF guard
+   - **GitHub profile** (`github.com/<user>`) → user API + public repo list
+     - One profile = one document: bio, public-repo count, top repos, languages
+     - GitHub's own routes (`/pricing`, `/explore`, …) are excluded by name; an
+       unknown handle falls back to the generic web scraper
    - **Portfolio / Personal Sites** → BeautifulSoup + requests
      - Extracts: text content, project titles, skills, about sections
    - **Certificate Verification (Coursera, Udemy, etc.)** → scrape verification page
@@ -352,7 +359,151 @@ CREATE TABLE tags (
 
 ---
 
-## 6. Project Structure
+## 6. UI Specification — What The User Actually Sees
+
+A single web app with **one top nav bar and four views**. No sidebars, no nested menus.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  ◈ TraceAI        Timeline   Graph   Search   Upload      │
+├──────────────────────────────────────────────────────────┤
+│                                                           │
+│                    [ active view ]                        │
+│                                                           │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+### View 1: Upload
+
+**Purpose:** Get data in with zero friction.
+
+**Layout:**
+- Large drag-and-drop zone (accepts multi-file drop)
+- Below it, two secondary inputs side by side:
+  - **URL field** — "Paste a GitHub repo, portfolio, or certificate link"
+  - **Text box** — "Or type an achievement that has no document"
+- Processing queue below, showing live per-file status
+
+**Processing status states (visible to user):**
+```
+resume.pdf        ✓ extracted → ✓ categorized → ✓ embedded → ✓ linked
+ml_project.docx   ✓ extracted → ✓ categorized → ⟳ embedding...
+cert_scan.jpg     ⟳ running OCR...
+```
+
+**Why this matters:** Showing the pipeline live is what makes the AI *visible*.
+A silent spinner looks like file upload. A visible pipeline looks intelligent.
+
+---
+
+### View 2: Timeline
+
+**Purpose:** The user's journey at a glance.
+
+**Layout:** Vertical scroll, newest at top or oldest at top (toggle).
+
+```
+2026  ●━━  Updated Resume                    [Academics]
+      │    Final year resume with 6 projects
+      │
+2025  ●━━  XYZ Corp Internship               [Internships]
+      │    6-month data automation internship
+      │
+      ●━━  Hackathon Winner — TechFest        [Achievements]
+      │
+2024  ●━━  Machine Learning Pipeline          [Projects]
+      │    End-to-end ML pipeline with pandas
+      │
+      ●━━  Data Science Club Lead             [Achievements]
+      │
+2023  ●━━  Python Programming Certificate     [Certifications]
+           Coursera · verified
+```
+
+**Interaction:**
+- Click any entry → expands inline to show summary, extracted skills,
+  a **download original** button, and links to connected documents
+- Color-coded dots by category
+- Filter chips at top: `All · Certifications · Projects · Internships · Achievements · Academics`
+
+---
+
+### View 3: Knowledge Graph
+
+**Purpose:** The single most visually convincing screen. This is the judge-facing view.
+
+**Layout:** Full-width interactive force-directed graph.
+
+**Node types (color-coded):**
+| Node | Color | Shape |
+|---|---|---|
+| Certificate | Blue (`#2a78d6`) | Circle |
+| Skill | Aqua (`#1baf7a`) | Circle (smaller) |
+| Project | Green (`#008300`) | Circle |
+| Internship | Yellow (`#eda100`) | Circle |
+| Career Path | *needs a validated hue* | Larger circle, right side |
+
+> Colors are the **validated category palette** in `frontend/src/categories.js` —
+> the single source of truth shared with the timeline (Module 4), so a category
+> is the same color everywhere. The earlier Purple / Teal / Coral here predated
+> that palette and clashed with it (Projects is green, Skills is aqua), which the
+> design principle "category colors are consistent everywhere" forbids. **Career
+> Path** is the one node type with no category behind it, so it needs an added
+> hue chosen and validated the same way (the dataviz palette validator), not
+> picked by eye.
+
+**Interaction:**
+- Click a node → it and all connected nodes highlight; everything else dims to 20% opacity
+- Hover → tooltip with title, date, category
+- Click a document node → side panel opens with summary + download original
+- Career path nodes show a match percentage badge (e.g. "AI/ML Engineer · 87%")
+
+**The money interaction:** Click the `Python` skill node. The Coursera certificate,
+the ML pipeline project, the XYZ internship, and the AI/ML Engineer career path
+all light up in a connected chain. That single click tells the whole story.
+
+---
+
+### View 4: Search
+
+**Purpose:** The success metric lives here.
+
+**Layout:**
+1. Search bar at top (always focused on page load)
+2. **Answer card** — Gemini's synthesized response in a tinted card
+3. **Sources list** — every document that informed the answer, as rows with:
+   - Category icon + color
+   - Title, source, date, category
+   - Original format badge (`PDF` / `DOCX` / `URL` / `IMG`)
+   - Download icon → serves the untouched original file
+4. **Relationship path footer** — shows the chain traversed, e.g.
+   `Python cert → Python skill → ML pipeline → XYZ internship → AI/ML engineer`
+
+**Two response modes:**
+- **Filter queries** ("show all my certificates") → skip the answer card,
+  go straight to a result grid
+- **Question queries** ("how does X connect to Y") → show answer card + sources
+
+**Suggested queries** shown as clickable chips below an empty search bar, so
+reviewers know what to try without guessing.
+
+---
+
+### Design Principles
+
+| Principle | Why |
+|---|---|
+| Four views, one nav | A student should never feel lost. No nesting. |
+| Every result downloads the original | Proves the format-preservation guarantee |
+| Show the AI pipeline live during upload | Makes the intelligence visible, not hidden |
+| Category colors are consistent everywhere | Timeline dot, graph node, and search icon match |
+| Empty states seed the demo | "Load demo profile" button on every empty view |
+
+---
+
+## 7. Project Structure
 
 ```
 TraceAI/
@@ -398,17 +549,24 @@ TraceAI/
 │       ├── api/
 │       │   └── client.js        # Axios/fetch wrapper
 │       ├── components/
-│       │   ├── Upload.jsx
-│       │   ├── SearchBar.jsx
-│       │   ├── Timeline.jsx
-│       │   ├── KnowledgeGraph.jsx
-│       │   ├── DocumentCard.jsx
-│       │   ├── Dashboard.jsx
-│       │   └── CategoryView.jsx
+│       │   ├── NavBar.jsx          # Top nav, 4 views
+│       │   ├── UploadZone.jsx      # Drag-drop + URL + text entry
+│       │   ├── ProcessingQueue.jsx # Live pipeline status per file
+│       │   ├── Timeline.jsx        # Vertical journey view
+│       │   ├── TimelineEntry.jsx   # Expandable entry
+│       │   ├── KnowledgeGraph.jsx  # Force-directed graph
+│       │   ├── NodeDetailPanel.jsx # Side panel on node click
+│       │   ├── SearchBar.jsx       # Query input + suggested chips
+│       │   ├── AnswerCard.jsx      # RAG synthesized response
+│       │   ├── SourceRow.jsx       # Result row + download original
+│       │   ├── RelationshipPath.jsx# Chain footer
+│       │   ├── CategoryChip.jsx    # Shared color-coded category tag
+│       │   └── EmptyState.jsx      # "Load demo profile" CTA
 │       └── pages/
-│           ├── Home.jsx
-│           ├── Search.jsx
-│           └── Profile.jsx
+│           ├── UploadPage.jsx
+│           ├── TimelinePage.jsx
+│           ├── GraphPage.jsx
+│           └── SearchPage.jsx
 ├── uploads/                     # Original files stored here
 ├── data/
 │   ├── traceai.db               # SQLite database
@@ -426,7 +584,7 @@ TraceAI/
 
 ---
 
-## 7. Build Timeline
+## 8. Build Timeline
 
 | Phase | Tasks | Time |
 |---|---|---|
@@ -445,7 +603,7 @@ TraceAI/
 
 ---
 
-## 8. AI/ML Techniques Used
+## 9. AI/ML Techniques Used
 
 | Technique | Where Used |
 |---|---|
@@ -456,11 +614,11 @@ TraceAI/
 | **RAG** | Gemini + retrieved docs for intelligent Q&A |
 | **Knowledge Mapping** | Entity-based graph connecting skills, projects, certs |
 | **LLM Classification** | Gemini API (free tier) for auto-categorization |
-| **Web Scraping** | BeautifulSoup + PyGithub for URL-based ingestion |
+| **Web Scraping** | BeautifulSoup + GitHub REST API for URL-based ingestion |
 
 ---
 
-## 9. Demo Script
+## 10. Demo Script
 
 1. **Open with the pain point** — show a messy folder of 20 unsorted files (5 sec)
 2. **Upload** 8-10 diverse documents at once (certs, resume, reports, internship letter)
@@ -482,7 +640,7 @@ TraceAI/
 
 ---
 
-## 10. Risk Mitigation
+## 11. Risk Mitigation
 
 | Risk | Mitigation |
 |---|---|
@@ -496,7 +654,7 @@ TraceAI/
 
 ---
 
-## 11. Required Deliverables
+## 12. Required Deliverables
 
 All four must be submitted to the Wooble portfolio.
 
@@ -524,7 +682,7 @@ All four must be submitted to the Wooble portfolio.
 
 ---
 
-## 12. Deployment Plan
+## 13. Deployment Plan
 
 A **live link beats a video** — reviewers can test it themselves.
 
@@ -540,7 +698,7 @@ clear local setup instructions. Do not let deployment eat build time.
 
 ---
 
-## 13. Sample Demo Dataset
+## 14. Sample Demo Dataset
 
 Reviewers will likely arrive at an empty app. Ship a **"Load Demo Profile"** button
 that seeds a realistic student journey:
@@ -564,7 +722,7 @@ which connects to an inferred AI/ML Engineer career path.
 
 ---
 
-## 14. Evaluation Criteria Mapping
+## 15. Evaluation Criteria Mapping
 
 | Criterion | Weight | How We Address It |
 |---|---|---|
@@ -578,7 +736,7 @@ show flawless natural-language search across varied document types.
 
 ---
 
-## 15. Success Metric Checkpoint
+## 16. Success Metric Checkpoint
 
 > *"I never have to search through folders again."*
 
@@ -595,7 +753,7 @@ need to dig through folders for — and gets the exact file instantly.
 
 ---
 
-## 16. Stretch Goals (If Time Permits)
+## 17. Stretch Goals (If Time Permits)
 
 - [ ] Multi-user support with authentication
 - [ ] Export portfolio as a shareable PDF/webpage
