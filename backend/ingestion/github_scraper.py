@@ -1,6 +1,6 @@
 """GitHub repository and profile metadata extraction.
 
-Uses the public REST API unauthenticated (60 req/hr — plan.md §10 notes a free
+Uses the public REST API unauthenticated (60 req/hr — plan.md § Risk Mitigation notes a free
 token raises this to 5000/hr if it ever becomes a constraint). Budget per
 ingest:
 

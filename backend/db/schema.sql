@@ -3,7 +3,7 @@
 -- Note on `user_id` in `documents`: originals live under uploads/{user_id}/,
 -- and storage.find_by_id() needs the user to locate a file. Phase 2 has no auth
 -- so everything is written as 'demo', but carrying the column now means the
--- multi-user stretch goal (plan.md §16) does not require a migration.
+-- multi-user stretch goal (plan.md § Stretch Goals) does not require a migration.
 
 PRAGMA foreign_keys = ON;
 

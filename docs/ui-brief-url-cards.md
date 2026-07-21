@@ -137,7 +137,7 @@ project documents — which feeds directly into the card-shape question above.
 This was open when the brief was first written and is now done; left in so the
 card design knows a repo *does* have a date to display. Gemini returns
 `date: null` for repos (a README does not state when the project began), so
-without intervention `extracted_date` stayed NULL and `plan.md` §10's
+without intervention `extracted_date` stayed NULL and `plan.md` § Risk Mitigation's
 `COALESCE(extracted_date, upload_date)` fallback would stamp a repo with the day
 it was ingested — `psf/requests` (created 2011-02) landing in 2026 on the very
 timeline meant to show a journey.

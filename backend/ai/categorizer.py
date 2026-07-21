@@ -11,7 +11,7 @@ defined in the plan. Three things this module takes seriously:
    unparseable output all degrade to `fallback_categorization()`, which infers
    what it can from the filename. The document still lands in the database with
    `confidence = 0.0` and a reason recorded, so the UI can flag it for review
-   (plan.md §10, "ambiguous categorization").
+   (plan.md § Risk Mitigation, "ambiguous categorization").
 
 3. **The free tier is 10 RPM.** `_RateLimiter` serializes calls with a minimum
    interval so a batch upload cannot trip the quota.

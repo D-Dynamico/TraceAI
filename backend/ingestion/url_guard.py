@@ -3,7 +3,7 @@
 `/api/ingest-url` fetches a URL chosen by the caller and returns the body. That
 is a server-side request forgery primitive unless the destination is checked:
 without this module, `http://169.254.169.254/latest/meta-data/` reaches the
-cloud metadata service once the app is deployed (plan.md §12 targets Render),
+cloud metadata service once the app is deployed (plan.md § Deployment targets Render),
 and `http://127.0.0.1:8000/api/documents` reads the app's own private API.
 
 Three things are enforced, and all three are needed:

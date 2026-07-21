@@ -123,7 +123,7 @@ def test_blocked_url_error_does_not_echo_resolved_address(client, monkeypatch):
 
 
 def test_ingest_url_with_no_extractable_text_is_rejected(client, monkeypatch):
-    """plan.md §10: a site we cannot read degrades to 'upload it manually'."""
+    """plan.md § Risk Mitigation: a site we cannot read degrades to 'upload it manually'."""
     monkeypatch.setattr(
         "ingestion.url_scraper.scrape_url",
         lambda url: ScrapeResult(url, "", "", "web", ["Fetch failed: 403"]),

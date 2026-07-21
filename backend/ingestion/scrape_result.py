@@ -32,7 +32,7 @@ class ScrapeResult:
     # creation date, say. Distinct from a date Gemini reads out of the text: a
     # README rarely states when the project began, so without this a repo has
     # no date at all and the timeline falls back to the upload date (plan.md
-    # §10), stamping a 2011 project with today. Still a *known* date, not an
+    # § Risk Mitigation), stamping a 2011 project with today. Still a *known* date, not an
     # assumed one, which is why it populates extracted_date.
     source_date: str | None = None
     # Structured facts the source states about itself — a repo's star count, its

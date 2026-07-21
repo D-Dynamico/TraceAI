@@ -191,7 +191,7 @@ def resolve_date(
 ) -> tuple[str | None, str]:
     """Collapse (extracted, upload) into (effective_date, date_source).
 
-    plan.md §10 has two halves: fall back to the upload date when no date was
+    plan.md § Risk Mitigation has two halves: fall back to the upload date when no date was
     found, **and flag it for user review**. Everything so far implemented only
     the first half, which is how a repo created in 2011 ends up sitting on the
     timeline at the moment it was ingested — silently wrong, and plausible

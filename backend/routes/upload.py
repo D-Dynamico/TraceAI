@@ -47,7 +47,7 @@ class CategorizationResponse(BaseModel):
     confidence: float
     # The date a card should actually show, and whether we know it or guessed
     # it. Resolved server-side by `database.resolve_date` so the UI cannot
-    # reimplement plan.md §10's fallback and get the "flag it" half wrong —
+    # reimplement plan.md § Risk Mitigation's fallback and get the "flag it" half wrong —
     # which is exactly what the client-side `dateAssumed = cat && !cat.date`
     # check it replaces was doing.
     effective_date: str | None = None
@@ -187,7 +187,7 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
 
     # Persist to SQLite. `extracted_date` stays null when no date was found —
     # the timeline falls back to upload_date at read time, which keeps "known
-    # date" distinguishable from "assumed date" (plan.md §10).
+    # date" distinguishable from "assumed date" (plan.md § Risk Mitigation).
     try:
         await run_in_threadpool(
             database.insert_document,
@@ -339,7 +339,7 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
 
     if not result.text.strip():
         # Nothing was extracted, so there is nothing to categorize or store.
-        # plan.md §10: degrade gracefully and tell the user to upload manually.
+        # plan.md § Risk Mitigation: degrade gracefully and tell the user to upload manually.
         raise HTTPException(
             status_code=422,
             detail=(

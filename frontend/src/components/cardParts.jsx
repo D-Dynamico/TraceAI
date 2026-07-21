@@ -5,7 +5,7 @@
 // the thing that made GitHub ingestion feel like an afterthought. What they do
 // share is everything below: the category badge, the confidence meter, the
 // entity chips, and the date. Those carry rules (palette constraints, the
-// plan.md §10 assumed-date flag) that must not be re-derived per card.
+// plan.md § Risk Mitigation assumed-date flag) that must not be re-derived per card.
 
 import { categoryColor, METER_FILL, METER_TRACK } from "../categories";
 
@@ -100,7 +100,7 @@ export function EntityChips({ cat }) {
   );
 }
 
-/** The assumed-date flag (plan.md §10).
+/** The assumed-date flag (plan.md § Risk Mitigation).
  *
  * Reads `date_source` from the backend rather than inferring it from a missing
  * `date`. The two agree today, but the fallback is resolved in exactly one
@@ -179,7 +179,7 @@ export function formatMonth(value) {
 
 /** The date for a card's meta line, or null if we only assumed it.
  *
- * plan.md §10 requires an assumed date be *flagged*, not merely filled.
+ * plan.md § Risk Mitigation requires an assumed date be *flagged*, not merely filled.
  * Printing "Jul 2026" in the meta line states it as fact; the caveat sitting
  * in a separate amber line does not undo that, it just contradicts it. So an
  * assumed date is left out here entirely and AssumedDateNotice carries the

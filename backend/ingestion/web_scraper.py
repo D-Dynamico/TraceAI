@@ -1,7 +1,7 @@
 """Generic webpage scraping — portfolios, blogs, certificate verification pages.
 
 Strips chrome (script/style/nav/header/footer) and returns the visible text.
-Per plan.md §10, a site that blocks us degrades to a warning so the user can be
+Per plan.md § Risk Mitigation, a site that blocks us degrades to a warning so the user can be
 told to upload the content manually instead.
 """
 

@@ -1,6 +1,6 @@
 """Date resolution: known dates, source dates, and the assumed-date flag.
 
-plan.md §10 has two halves — fall back to the upload date when no date is found,
+plan.md § Risk Mitigation has two halves — fall back to the upload date when no date is found,
 *and* flag it for review. Only the first half existed, which is how a repo
 created in 2011 lands on the timeline at the moment it was ingested.
 """
@@ -148,7 +148,7 @@ def test_generic_web_page_has_no_source_date(client, monkeypatch, no_date_found)
 
 
 def test_missing_date_is_flagged_not_silently_filled(client, monkeypatch, no_date_found):
-    """The half of plan.md §10 that was never implemented.
+    """The half of plan.md § Risk Mitigation that was never implemented.
 
     Mutation: have _resolve_date always report "extracted" -> this fails. The
     fallback alone is not enough; a consumer must be able to tell the two apart.

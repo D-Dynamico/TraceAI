@@ -112,7 +112,7 @@ def test_github_own_route_is_not_mistaken_for_a_profile():
 
 
 def test_nonexistent_repo_degrades_to_warnings_not_an_exception():
-    """plan.md §10: a failed scrape must not raise."""
+    """plan.md § Risk Mitigation: a failed scrape must not raise."""
     result = url_scraper.scrape_url(
         "https://github.com/psf/this-repo-does-not-exist-9f3a2b"
     )

@@ -12,7 +12,7 @@ Read `plan.md` (product spec, user-owned) and `CLAUDE.md` (conventions) first.
 
 ## Why these were deferred rather than fixed
 
-`plan.md` §14 weights the evaluation: AI organization/categorization/retrieval
+`plan.md` § Evaluation Criteria weights the evaluation: AI organization/categorization/retrieval
 40%, AI/ML techniques 25%, innovation/UX 20%. Phases 4–7 — embeddings, the
 relationship graph, the timeline, RAG — are the first 65% and are unbuilt. The
 card is in the 20% bucket and is no longer the blocker it was when the brief in
@@ -120,7 +120,7 @@ Phase 5 (`ai/career_path.py`) or Phase 7 (`ai/rag.py`), whichever lands first.
 
 From the session handoff, unresolved and not covered above:
 
-- **Rate-limit mitigation is only the 6.5s spacer.** `plan.md` §10 lists
+- **Rate-limit mitigation is only the 6.5s spacer.** `plan.md` § Risk Mitigation lists
   "cache responses, batch processing, queue uploads" — none exist. Quota
   pressure grows as Phases 4/5/7 add call sites, so item B's `retryable` flag
   is most useful alongside an actual retry or cache.

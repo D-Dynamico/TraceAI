@@ -74,11 +74,11 @@ These have each cost real time. Read before running anything.
   they need the type — defining it in `url_scraper` is an import cycle.
 - **Never read `extracted_date` directly for display or sorting.** Use
   `effective_date` + `date_source` from `database._resolve_date`, the single
-  place that applies plan.md §10's upload-date fallback. A NULL
+  place that applies plan.md § Risk Mitigation's upload-date fallback. A NULL
   `extracted_date` means "unknown", and reading the column raw either drops the
   document or silently dates it to its upload — which is how a repo created in
   2011 lands on the timeline today. `date_source` is `extracted` or `assumed`;
-  §10 requires the assumed case be flagged, not just filled.
+  § Risk Mitigation requires the assumed case be flagged, not just filled.
 - Documents with no original file (`file_type` of `url` or `text_entry`) store
   `original_path = ""`, not NULL. The column is NOT NULL and keeping it that way
   means every reader has one code path. Their `checksum` is the SHA-256 of the

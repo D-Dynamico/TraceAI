@@ -79,7 +79,7 @@ class Categorization(BaseModel):
         """Keep YYYY or YYYY-MM; reject anything else rather than storing junk.
 
         The timeline sorts on this column, so a malformed value is worse than
-        a null (plan.md §10 falls back to upload date when no date is found).
+        a null (plan.md § Risk Mitigation falls back to upload date when no date is found).
         """
         if value is None:
             return None
@@ -131,7 +131,7 @@ class DocumentSummary(BaseModel):
     upload_date: str | None = None
     # The date a consumer should actually display or sort on, plus where it came
     # from. Resolved server-side in database._resolve_date so the timeline and
-    # the graph cannot apply plan.md §10's upload-date fallback while forgetting
+    # the graph cannot apply plan.md § Risk Mitigation's upload-date fallback while forgetting
     # its "flag for user review" half. "assumed" means we guessed — show it as a
     # guess.
     effective_date: str | None = None
