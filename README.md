@@ -13,8 +13,12 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 - ✅ Phase 1 — Project setup, file upload, text extraction
 - ✅ Phase 2 — Gemini categorization + SQLite storage
 - ✅ Phase 3 — URL ingestion + written-response input
-- ✅ **Phase 4 — Embeddings + ChromaDB + semantic search** (current)
-- ⬜ Phase 5+ — relationship graph, career paths, timeline, RAG
+- ✅ Phase 4 — Embeddings + ChromaDB + semantic search
+- ◑ **Phase 5 — Relationship graph + career-path inference** — backend done
+  (`/api/graph`, `/api/career-paths`); the force-directed graph UI (View 3) is
+  the next build
+- ✅ **Phase 6 — Timeline view + search UI** (current)
+- ⬜ Phase 7+ — RAG answer card, demo seed, deployment
 
 ### Phase 1 capabilities
 - Upload PDF / DOCX / PPTX / TXT / images.
@@ -119,6 +123,69 @@ validator results and the two candidate orderings that failed.
 - **Isolation built in.** Vector queries filter by `user_id`, so results cannot
   cross users once multi-user auth lands. Enforced in code and mutation-tested.
 
+### Phase 5 capabilities (backend)
+
+- **Knowledge graph.** `GET /api/graph` returns `{nodes, edges}` for the
+  force-directed view. It is built **on read** from SQLite + the vector store —
+  at a student-profile scale, recomputing edges is instant and can never go
+  stale. Two deterministic layers (no Gemini): **entity edges** connect every
+  document to a shared skill node (typed `certifies_skill` for a certificate,
+  `skill_used_in` otherwise — one skill hub per distinct value), and
+  **similarity edges** (`similar_to`) link documents whose cosine similarity
+  exceeds 0.75, reusing the existing semantic query rather than a second vector
+  API.
+- **Career-path inference.** `POST /api/career-paths` sends the whole profile to
+  Gemini and infers likely trajectories — "AI/ML Engineer · 87%" — with the
+  supporting documents and the skills still to learn. Triggered explicitly (it
+  costs quota and is stable between uploads), persisted to the `career_paths`
+  table, and merged into the graph as `career_path` nodes with `leads_to` edges.
+  Like the categorizer it **never raises**: a failure returns no paths plus a
+  structured reason, and a quota wall on re-inference does not wipe a good set.
+- **Structured degradation contract.** Both Gemini callers now degrade through
+  `ai/degradation.py`: a failed result carries a `degraded_reason`
+  (`quota | timeout | unreachable | no_api_key | unreadable_response | no_text`)
+  and a `retryable` flag, surfaced on the API — so the UI can offer "try again"
+  for a quota wall but not for a missing key, instead of parsing prose. A
+  retryable card's **Try again** button calls `POST /api/documents/{id}/recategorize`,
+  which re-runs categorization over the preserved text and updates the row in
+  place (the original file is never touched).
+- **One shared rate limiter.** The 10 RPM free-tier budget is per-key, not
+  per-module, so both Gemini callers queue through a single limiter in
+  `ai/gemini.py`.
+- **Isolation.** The graph is scoped to `user_id` at every source, and the scope
+  is mutation-tested — breaking the `WHERE user_id` filter leaks a foreign node
+  and turns the isolation test red.
+
+### Phase 6 capabilities (UI)
+
+- **One nav, four views.** A lightweight view switch (no router): **Timeline**,
+  **Search**, **Upload** are live; **Graph** is shown disabled ("soon") until
+  Phase 5's UI lands.
+- **Timeline (View 2).** The persistent "all documents" view, reading
+  `GET /api/documents` (dates already resolved server-side). Grouped by year,
+  newest↔oldest toggle, category filter chips, expand-to-detail with skills and
+  a download/open action. Sorted on `effective_date` **only**, never the raw
+  `extracted_date`; an assumed (upload-date fallback) date is flagged with a
+  non-color encoding — a hollow ring dot plus a "date assumed" tag — so it does
+  not silently read as a document from today.
+- **Search (View 4).** Wired to `POST /api/search`. Filter queries ("show all my
+  certificates") return a result grid; question queries return sources ranked by
+  relevance. There is **no synthesized answer card yet** — that is Phase 7's RAG
+  pipeline, so a question returns ranked sources with nothing faked. Each row
+  branches on `has_original` (download original vs open source) and carries a
+  format badge.
+- **Live processing feedback.** The upload drop zone now shows a pending
+  skeleton card per in-flight item, a per-input busy state (uploading files no
+  longer disables the URL/text inputs), and an "n of m" batch count — no fake
+  percentage bar, since the wait is the Gemini round trip, not bytes.
+- **Consistent category color.** The timeline dots, filter chips, and search
+  icons all reuse the validated palette in `frontend/src/categories.js`. The
+  Career Path graph node is the one type with no category behind it; the palette
+  validator was run and **no seventh categorical hue passes** (the six saturate
+  the usable space on white), so it is encoded compositely instead — a reserved
+  dark slate plus larger size, placement, and a mandatory label
+  (`CAREER_PATH_COLOR`).
+
 ### Original Format Preservation
 
 Treated as a hard guarantee, enforced in code and covered by tests:
@@ -203,8 +270,11 @@ cd backend
 | POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored; GitHub repos/profiles also return a `details` object |
 | POST   | `/api/ingest-text`              | `{ "text": "..." }` → written response, categorized + stored |
 | POST   | `/api/search`                   | `{ "query": "...", "k": 5 }` → routed to a SQL filter or semantic vector search; ranked source documents |
+| GET    | `/api/graph`                    | `{ nodes, edges }` for the knowledge graph — documents, skill hubs, career paths, and their edges |
+| POST   | `/api/career-paths`             | Infer career trajectories over the whole profile (Gemini); persists and returns them + any degradation |
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
+| POST   | `/api/documents/{id}/recategorize` | Re-run categorization over the preserved text (the retry path); updates the row in place |
 | GET    | `/api/documents/{id}/download`  | Original file, integrity-verified                       |
 | GET    | `/api/documents/{id}/verify`    | Recompute checksum, report match                        |
 
@@ -214,8 +284,12 @@ cd backend
 | ---------------------------- | ------------------------------------------------------- |
 | `uploads/{user_id}/`         | Originals, byte-for-byte unchanged                      |
 | `uploads/.../{f}.meta.json`  | Sidecar — on-disk source of truth for integrity         |
-| `data/traceai.db`            | SQLite — queryable metadata, entities, tags             |
+| `data/traceai.db`            | SQLite — queryable metadata, entities, tags, inferred career paths |
 | `data/chroma/`               | ChromaDB — document embeddings for semantic search (derived; rebuildable from SQLite) |
+
+Graph relationships (document↔skill, `similar_to`) are **computed on read**, not
+stored — only the Gemini-inferred `career_paths` are persisted, since they are
+the one part expensive to recompute.
 
 The sidecar and the database are written from the same upload, deliberately
 duplicating checksum and extraction data: an original plus its sidecar can be
@@ -229,9 +303,9 @@ this belt-and-braces rule — it holds nothing that is not regenerable from
 
 ```bash
 cd backend
-pytest              # 263 tests, no network, ~1 min
+pytest              # 294 tests, no network, ~1 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
-pytest -m live      # 3 more that call the real Gemini API (needs a key, ~45s)
+pytest -m live      # 4 more that call the real Gemini API (needs a key, ~1 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
 ```
 
@@ -254,8 +328,12 @@ actually ranks first.
 | `test_github_ingest.py`  | Repo enrichment, profile scraping, URL routing, and the link-scheme guard |
 | `test_embeddings.py`     | Chunking, add/query/delete, multi-chunk dedup, **user_id isolation**, rebuild-from-SQLite |
 | `test_search.py`         | Query routing (filter vs semantic) and the `/api/search` endpoint |
+| `test_relationship_engine.py` | Entity + similarity edge construction (Module 3 Layers A/B) |
+| `test_graph_api.py`      | `/api/graph` nodes/edges, career merge, and **mutation-tested user isolation** |
+| `test_career_path.py`    | Career-path inference — index mapping, clamping, never-raises, no-wipe on degrade |
+| `test_degradation.py`    | The item B contract — reason→retryable table and exception classification |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
-| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key          |
+| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path inference |
 
 `live` tests are deselected by default because they cost free-tier quota and
 need network. They are the only tests that catch a retired model id, a changed
@@ -289,3 +367,8 @@ Phase 4 added one assertion to that set: the vector store's `user_id` filter.
 Dropping `where={"user_id": ...}` in `embeddings.query` makes another user's
 document leak into search results and turns `test_query_is_filtered_by_user_id`
 red — verified by mutation before the code was committed.
+
+Phase 5 added a second isolation assertion at the graph layer: breaking the
+`WHERE user_id` filter in `database.list_documents` leaks a foreign document
+into `GET /api/graph` and turns `test_graph_excludes_other_users_documents` red
+— likewise mutation-verified.

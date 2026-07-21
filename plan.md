@@ -525,12 +525,15 @@ TraceAI/
 │   │   ├── web_scraper.py       # Generic webpage scraping
 │   │   └── text_entry.py        # Direct written-response handling
 │   ├── ai/
+│   │   ├── gemini.py            # Shared Gemini client: one rate limiter, redaction, config
 │   │   ├── categorizer.py       # Gemini-powered classification
+│   │   ├── degradation.py       # Structured degraded-reason contract (retryable)
 │   │   ├── embeddings.py        # Embedding generation + ChromaDB
-│   │   ├── relationship_engine.py
-│   │   ├── career_path.py       # Career trajectory inference
+│   │   ├── query_router.py      # Deterministic filter-vs-semantic query routing
+│   │   ├── relationship_engine.py  # Entity + similarity graph edges (Layers A/B)
+│   │   ├── career_path.py       # Career trajectory inference (Layer C, Gemini)
 │   │   ├── search_engine.py     # Hybrid search orchestration
-│   │   └── rag.py               # RAG pipeline
+│   │   └── rag.py               # RAG pipeline (Phase 7)
 │   ├── db/
 │   │   ├── database.py          # SQLite setup + queries
 │   │   └── schema.sql
@@ -539,11 +542,11 @@ TraceAI/
 │   ├── models/
 │   │   └── document.py          # Pydantic models
 │   └── routes/
-│       ├── upload.py
+│       ├── upload.py            # upload / ingest-url / ingest-text / recategorize
 │       ├── search.py
-│       ├── timeline.py
-│       ├── graph.py
-│       └── documents.py
+│       ├── graph.py             # GET /api/graph
+│       ├── career.py            # POST /api/career-paths
+│       └── documents.py         # list / detail / download / verify (also feeds the timeline)
 ├── frontend/
 │   ├── package.json
 │   ├── vite.config.js
@@ -592,20 +595,20 @@ TraceAI/
 
 ## 8. Build Timeline
 
-| Phase | Tasks | Time |
-|---|---|---|
-| **Phase 1** | Project setup, file upload, text extraction | 3 hours |
-| **Phase 2** | Gemini categorization + SQLite storage | 3 hours |
-| **Phase 3** | URL ingestion (GitHub, web) + written-response input | 2 hours |
-| **Phase 4** | Embeddings + ChromaDB + semantic search | 3 hours |
-| **Phase 5** | Relationship engine + career path inference + graph | 3 hours |
-| **Phase 6** | Timeline view + search UI | 2 hours |
-| **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours |
-| **Phase 8** | Sample demo dataset + seed script | 1 hour |
-| **Phase 9** | UI polish, testing with real docs, edge cases | 2 hours |
-| **Phase 10** | Deployment (Vercel + Render) | 2 hours |
-| **Phase 11** | Demo video, README, architecture diagram, thought process | 2 hours |
-| **Total** | | **~25 hours** |
+| Phase | Tasks | Time | Status |
+|---|---|---|---|
+| **Phase 1** | Project setup, file upload, text extraction | 3 hours | ✅ done |
+| **Phase 2** | Gemini categorization + SQLite storage | 3 hours | ✅ done |
+| **Phase 3** | URL ingestion (GitHub, web) + written-response input | 2 hours | ✅ done |
+| **Phase 4** | Embeddings + ChromaDB + semantic search | 3 hours | ✅ done |
+| **Phase 5** | Relationship engine + career path inference + graph | 3 hours | ◑ backend done (`/api/graph`, `/api/career-paths`); force-directed graph UI (View 3) pending |
+| **Phase 6** | Timeline view + search UI | 2 hours | ✅ done (Views 2 & 4) |
+| **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours | ⬜ next |
+| **Phase 8** | Sample demo dataset + seed script | 1 hour | ⬜ |
+| **Phase 9** | UI polish, testing with real docs, edge cases | 2 hours | ⬜ |
+| **Phase 10** | Deployment (Vercel + Render) | 2 hours | ⬜ |
+| **Phase 11** | Demo video, README, architecture diagram, thought process | 2 hours | ⬜ |
+| **Total** | | **~25 hours** | |
 
 ---
 
