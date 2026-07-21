@@ -83,6 +83,25 @@ def test_list_and_detail_endpoints(client, stored_doc, stub_result):
     assert detail["metadata"]["method"] == "native"
 
 
+def test_has_original_distinguishes_files_from_fileless(client, stored_doc):
+    """The Phase 6 timeline/search branch download-vs-open on this flag.
+
+    A file upload has an original to download; a text entry does not
+    (original_path == ""). Mutation-tested: hard-coding has_original=True in the
+    list route turns the text-entry assertion red.
+    """
+    file_id, _, _ = stored_doc
+    text_id = client.post(
+        "/api/ingest-text",
+        json={"text": "Led the Data Science Club in 2024, ran five workshops."},
+    ).json()["id"]
+
+    by_id = {d["id"]: d for d in client.get("/api/documents").json()}
+
+    assert by_id[file_id]["has_original"] is True
+    assert by_id[text_id]["has_original"] is False
+
+
 def test_category_filter(client, stored_doc):
     assert len(client.get("/api/documents", params={"category": "Certifications"}).json()) == 1
     assert client.get("/api/documents", params={"category": "Projects"}).json() == []

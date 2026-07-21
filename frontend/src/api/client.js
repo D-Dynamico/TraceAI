@@ -35,6 +35,25 @@ export async function ingestText(text) {
   return handle(res);
 }
 
+export async function search(query, k = 5) {
+  const res = await fetch("/api/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, k }),
+  });
+  return handle(res);
+}
+
+export async function listDocuments() {
+  const res = await fetch("/api/documents");
+  return handle(res);
+}
+
+export async function getDocument(id) {
+  const res = await fetch(`/api/documents/${id}`);
+  return handle(res);
+}
+
 export async function health() {
   const res = await fetch("/api/health");
   return handle(res);

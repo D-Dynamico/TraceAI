@@ -138,6 +138,11 @@ class DocumentSummary(BaseModel):
     date_source: str = "assumed"  # "extracted" | "assumed"
     confidence: float | None = None
     checksum: str | None = None
+    # True when there is an original file to download; False for URL / text_entry
+    # documents (original_path == ""). Mirrors SearchResult.has_original so the
+    # timeline and search branch download-vs-open identically, without either
+    # re-deriving it from file_type. See CLAUDE.md on the empty-string convention.
+    has_original: bool = False
 
 
 class DocumentDetail(DocumentSummary):

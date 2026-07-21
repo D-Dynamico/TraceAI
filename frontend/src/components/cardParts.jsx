@@ -190,6 +190,58 @@ export function knownDate(cat) {
   return formatMonth(cat.effective_date);
 }
 
+// The original format, as a short uppercase badge (plan.md §6 View 4). Maps the
+// stored file_type to what a reader recognizes; url/text_entry have no file but
+// still get a badge so every row reads the same shape.
+const FORMAT_LABELS = {
+  pdf: "PDF",
+  docx: "DOCX",
+  pptx: "PPTX",
+  txt: "TXT",
+  md: "MD",
+  image: "IMG",
+  url: "URL",
+  text_entry: "TEXT",
+};
+
+export function formatLabel(fileType) {
+  return FORMAT_LABELS[fileType] || (fileType ? fileType.toUpperCase() : "DOC");
+}
+
+export function FormatBadge({ fileType }) {
+  return (
+    <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide text-slate-500">
+      {formatLabel(fileType)}
+    </span>
+  );
+}
+
+/** Download original / open source — the format-preservation link.
+ *
+ * Branches on `has_original` (authoritative from the backend, never re-derived
+ * from file_type here): a stored file downloads byte-for-byte; a URL opens its
+ * live source; a text entry has neither, so nothing is offered.
+ */
+export function OriginalAction({ id, hasOriginal, sourceUrl }) {
+  const cls =
+    "shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600";
+  if (hasOriginal) {
+    return (
+      <a href={`/api/documents/${id}/download`} className={cls}>
+        Download original
+      </a>
+    );
+  }
+  if (sourceUrl) {
+    return (
+      <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className={cls}>
+        Open source ↗
+      </a>
+    );
+  }
+  return null;
+}
+
 /** Card shell — the border/padding every result shares. */
 export function CardShell({ children }) {
   return (

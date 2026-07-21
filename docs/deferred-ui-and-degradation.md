@@ -27,7 +27,25 @@ Phases 5–7 would immediately correct.
 
 ---
 
-## Item A — the processing state is too quiet
+## Item A — the processing state is too quiet — RESOLVED (Phase 6)
+
+**Resolved** in Phase 6, when the drop zone was being touched (as this note
+anticipated). `frontend/src/components/Upload.jsx` now carries the full set the
+"Suggested scope" below called for:
+
+- **Per-input busy state** — `busy` is now `{ files, url, text }`, not one shared
+  boolean, so ingesting files no longer disables the URL and text inputs and each
+  control reports only its own work ("Adding…", "Ingesting…").
+- **Pending skeleton card** — an in-flight item shows a `PendingCard` (pulsing
+  bars + "categorizing…") at the top of the results list, slotting out for the
+  real card when the request resolves.
+- **Batch count** — a multi-file drop shows "Ingesting n of m…" on the drop zone.
+- Still **no percentage bar**: the wait is the Gemini round trip behind the 6.5s
+  limiter, not bytes, so the indicator stays honestly indeterminate.
+
+The original analysis is kept below for the record.
+
+---
 
 **Observed:** during an ingest the drop zone's label changes from
 "Drop files here or click to browse" to "Processing…" and nothing else moves.

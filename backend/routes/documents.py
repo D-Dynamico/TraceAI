@@ -51,6 +51,10 @@ def list_documents(
 ) -> list[DocumentSummary]:
     """List categorized documents, newest first."""
     rows = database.list_documents(user_id=DEFAULT_USER, category=category, limit=limit)
+    for row in rows:
+        # Empty original_path is the fileless (url / text_entry) convention; the
+        # column is NOT NULL. bool("") is False — no original to download.
+        row["has_original"] = bool(row.get("original_path"))
     return [DocumentSummary.model_validate(row) for row in rows]
 
 
