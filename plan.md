@@ -279,10 +279,16 @@ Internship ─────leads_to─────────▶ Career Path
 - Return answer + links to source documents
 
 **Path 3 — Hybrid (best results):**
-- Use Gemini to parse query into: intent, filters, and semantic query
-- Run both structured and semantic search
-- Merge and rank results
-- Return with original file download links
+- A deterministic router classifies the query (no Gemini call): a confident
+  structured filter (a category word, "latest") runs against SQLite; everything
+  else runs semantic search
+- Question-shaped queries additionally get a Gemini-synthesized answer (Path 2)
+- Merge and rank; return with original file download links
+- **Why not parse the query with Gemini?** It shares the categorizer's
+  rate-limiter lane, so a search issued right after an upload would stall behind
+  the ingest queue — on the one screen that must feel instant — and it spends
+  daily free-tier quota on "show all my certificates". Query *understanding* is
+  deterministic; Gemini is reserved for answer *synthesis*.
 
 **Example Queries:**
 | Query | Strategy |
