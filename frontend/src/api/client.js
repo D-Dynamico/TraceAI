@@ -59,6 +59,19 @@ export async function recategorize(id) {
   return handle(res);
 }
 
+export async function getGraph() {
+  const res = await fetch("/api/graph");
+  return handle(res);
+}
+
+// Career-path inference is a Gemini call, so it is manual-trigger (a button on
+// the graph), not run on every graph read. The response carries the item-B
+// degradation contract (degraded_reason / retryable) so the UI can offer a retry.
+export async function inferCareerPaths() {
+  const res = await fetch("/api/career-paths", { method: "POST" });
+  return handle(res);
+}
+
 export async function health() {
   const res = await fetch("/api/health");
   return handle(res);

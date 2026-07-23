@@ -124,7 +124,7 @@ export function AssumedDateNotice({ cat }) {
 // Card copy per degraded reason (deferred item B). The backend sends a reason
 // *code* and a `retryable` flag precisely so the client can behave rather than
 // parse prose — this is the one place that turns the code into words.
-const DEGRADED_COPY = {
+export const DEGRADED_COPY = {
   quota: "The free AI quota is used up for now.",
   timeout: "The AI service didn’t respond in time.",
   unreachable: "The AI service couldn’t be reached.",
