@@ -546,6 +546,7 @@ TraceAI/
 │       ├── search.py
 │       ├── graph.py             # GET /api/graph
 │       ├── career.py            # POST /api/career-paths
+│       ├── seed.py              # POST /api/seed-demo (loads the demo profile)
 │       └── documents.py         # list / detail / download / verify (also feeds the timeline)
 ├── frontend/
 │   ├── package.json
@@ -581,8 +582,8 @@ TraceAI/
 │   ├── traceai.db               # SQLite database
 │   └── chroma/                  # ChromaDB vector store
 ├── seed/
-│   ├── seed_demo.py             # Loads sample student profile
-│   └── sample_docs/             # 10 realistic demo documents
+│   ├── __init__.py
+│   └── seed_demo.py             # Loads the 10-doc demo profile (fileless; no sample_docs)
 ├── docs/
 │   ├── architecture.md
 │   ├── architecture_diagram.png # Deliverable #3
