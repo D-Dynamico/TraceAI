@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { search } from "../api/client";
+import { answer as fetchAnswer, search } from "../api/client";
+import AnswerCard from "./AnswerCard";
 import SourceRow from "./SourceRow";
 
 // plan.md §16: the queries the demo must answer. Shown as chips so a reviewer
@@ -17,10 +18,29 @@ export default function Search() {
   const [response, setResponse] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The RAG answer is a second, slower request fired only for question queries,
+  // so it has its own state: the sources render the instant search returns.
+  const [answerBusy, setAnswerBusy] = useState(false);
+  const [answerData, setAnswerData] = useState(null);
   const inputRef = useRef(null);
 
   // The search bar is focused on arrival (plan.md §6 View 4).
   useEffect(() => inputRef.current?.focus(), []);
+
+  // Synthesize an answer over the sources search returned. Kept separate from
+  // run() so a retry can re-fire it without re-running the search.
+  async function loadAnswer(q, results) {
+    setAnswerBusy(true);
+    setAnswerData(null);
+    try {
+      setAnswerData(await fetchAnswer(q, results.map((r) => r.id)));
+    } catch (e) {
+      // A failed answer must never blank the sources — degrade to sources-only.
+      setAnswerData(null);
+      setError(e.message);
+    }
+    setAnswerBusy(false);
+  }
 
   async function run(q) {
     const trimmed = (q ?? query).trim();
@@ -28,8 +48,15 @@ export default function Search() {
     setQuery(trimmed);
     setBusy(true);
     setError("");
+    setAnswerData(null);
+    setAnswerBusy(false);
     try {
-      setResponse(await search(trimmed));
+      const res = await search(trimmed);
+      setResponse(res);
+      // A question over at least one source gets a synthesized answer card.
+      if (res.answerable && res.results.length > 0) {
+        loadAnswer(trimmed, res.results);
+      }
     } catch (e) {
       setError(e.message);
       setResponse(null);
@@ -38,6 +65,9 @@ export default function Search() {
   }
 
   const isSemantic = response?.mode === "semantic";
+  // Which source rows the answer actually cited — badged so a reviewer can see
+  // exactly what informed the synthesized answer.
+  const citedIds = new Set(answerData?.cited_doc_ids || []);
 
   return (
     <div className="space-y-5">
@@ -83,6 +113,16 @@ export default function Search() {
 
       {response && (
         <div className="space-y-3">
+          {/* Answer card (plan.md §6 View 4) — question queries only, above the
+              sources. Its own loading/degraded state; the sources never wait on it. */}
+          {response.answerable && (answerBusy || answerData) && (
+            <AnswerCard
+              loading={answerBusy}
+              data={answerData}
+              onRetry={() => loadAnswer(response.query, response.results)}
+            />
+          )}
+
           <p className="text-xs text-slate-500">
             {response.count === 0
               ? "No matches"
@@ -93,10 +133,8 @@ export default function Search() {
                 }`}
           </p>
 
-          {/* The RAG answer card is Phase 7. Until then a question returns
-              ranked sources with no synthesized answer — nothing faked. */}
           {response.results.map((r) => (
-            <SourceRow key={r.id} result={r} />
+            <SourceRow key={r.id} result={r} cited={citedIds.has(r.id)} />
           ))}
 
           {response.count === 0 && (

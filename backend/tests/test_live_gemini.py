@@ -15,7 +15,7 @@ import uuid
 
 import pytest
 
-from ai import career_path, categorizer
+from ai import career_path, categorizer, rag
 from conftest import upload
 from db import database
 
@@ -110,3 +110,24 @@ def test_career_path_inference_against_the_live_api(client):
     assert all(doc_id in known for doc_id in path.evidence_doc_ids), (
         "evidence must map to real documents, not hallucinated indices"
     )
+
+
+def test_rag_synthesis_against_the_live_api():
+    """A question over real sources -> live Gemini -> a grounded, cited answer."""
+    docs = [
+        {"id": "d0", "title": "Python ML Certificate", "category": "Certifications",
+         "summary": "Completed a Python for Data Science and Machine Learning course.",
+         "raw_text": "Certificate: Python for Data Science and Machine Learning. Skills: Python, pandas, scikit-learn."},
+        {"id": "d1", "title": "Data Automation Internship", "category": "Internships",
+         "summary": "Six-month internship automating data pipelines in Python and SQL.",
+         "raw_text": "Internship at XYZ Corp. Built data automation with Python and SQL, deployed ML models."},
+    ]
+
+    result = rag.synthesize(
+        "How does my Python certificate connect to my internship?", docs
+    )
+
+    assert result.degraded_reason is None, result.degraded_reason
+    assert result.answer and result.answer.strip(), "live synthesis returned no answer"
+    # Citations must map back to the sources provided, never a fabricated index.
+    assert all(cid in {"d0", "d1"} for cid in result.cited_doc_ids), result.cited_doc_ids

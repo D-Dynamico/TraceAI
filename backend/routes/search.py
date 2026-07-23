@@ -5,8 +5,10 @@ Backend for the search view. A query is routed deterministically
 semantic vector search against Chroma and hydrates the hits back from SQLite —
 so every result carries the metadata a card needs and links to its original.
 
-This is Phase 4: it returns *ranked sources*. The RAG answer card (plan.md §4
-Module 5, Path 2) is Phase 7 and is not synthesized here.
+`/search` returns *ranked sources* and stays instant. The RAG answer card
+(plan.md §4 Module 5, Path 2) is a separate `/answer` endpoint here: a
+question-shaped query is flagged `answerable`, and the UI then fetches a
+Gemini-synthesized answer over the returned sources without blocking the list.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ai import embeddings, query_router
+from ai import embeddings, query_router, rag
 from db import database
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,10 @@ class SearchResponse(BaseModel):
     category: str | None = None
     count: int
     results: list[SearchResult] = Field(default_factory=list)
+    # True when the query is question-shaped (plan.md §6 View 4): the UI should
+    # then fetch a synthesized answer from /api/answer over these results. A
+    # filter query is never a question, so this is False for the grid modes.
+    answerable: bool = False
 
 
 def _to_result(doc: dict[str, Any], score: float | None = None) -> SearchResult:
@@ -143,4 +149,56 @@ async def search(payload: SearchRequest) -> SearchResponse:
         category=decision.category,
         count=len(results),
         results=results,
+        answerable=query_router.is_question(query),
+    )
+
+
+class AnswerRequest(BaseModel):
+    query: str
+    # The documents the search already returned. Passing them (rather than
+    # re-retrieving) guarantees the answer is grounded in exactly the sources on
+    # screen and cites the visible rows, and it spends no second vector query.
+    doc_ids: list[str] = Field(default_factory=list)
+
+
+class AnswerResponse(BaseModel):
+    answer: str | None = None
+    cited_doc_ids: list[str] = Field(default_factory=list)
+    # Structured degradation (item B): null on success; a reason code + whether a
+    # retry can help when synthesis degraded. The UI shows sources either way and
+    # never fabricates an answer on a quota wall.
+    degraded_reason: str | None = None
+    retryable: bool = False
+
+
+@router.post("/answer", response_model=AnswerResponse)
+async def answer(payload: AnswerRequest) -> AnswerResponse:
+    """RAG synthesis over already-retrieved sources (plan.md §4 Module 5 Path 2).
+
+    Separate from /search so the sources render instantly while the Gemini call
+    runs behind its own loading/degraded state. Hydrates the given ids from
+    SQLite (the source of truth) in their given order and synthesizes; an id that
+    no longer resolves is skipped.
+    """
+    query = (payload.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query must not be empty.")
+    if len(query) > MAX_QUERY_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Query is too long (max {MAX_QUERY_CHARS} characters).",
+        )
+
+    docs: list[dict[str, Any]] = []
+    for doc_id in payload.doc_ids[:MAX_K]:
+        doc = await run_in_threadpool(database.get_document, doc_id)
+        if doc is not None:
+            docs.append(doc)
+
+    result = await run_in_threadpool(rag.synthesize, query, docs)
+    return AnswerResponse(
+        answer=result.answer,
+        cited_doc_ids=result.cited_doc_ids,
+        degraded_reason=result.degraded_reason,
+        retryable=result.retryable,
     )

@@ -44,6 +44,19 @@ export async function search(query, k = 5) {
   return handle(res);
 }
 
+// RAG answer synthesis (Phase 7). Fired only for question-shaped queries
+// (search response `answerable`), over the doc ids search already returned, so
+// the answer is grounded in exactly the visible sources. Carries the item-B
+// degradation contract (degraded_reason / retryable).
+export async function answer(query, docIds) {
+  const res = await fetch("/api/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, doc_ids: docIds }),
+  });
+  return handle(res);
+}
+
 export async function listDocuments() {
   const res = await fetch("/api/documents");
   return handle(res);

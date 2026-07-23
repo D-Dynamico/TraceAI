@@ -106,6 +106,18 @@ def _looks_like_question(query: str, words: list[str]) -> bool:
     return any(word in _RELATIONAL for word in words)
 
 
+def is_question(query: str) -> bool:
+    """Whether a query wants a synthesized answer rather than a list.
+
+    The public form of `_looks_like_question`, used by the search endpoint to
+    decide whether to offer a RAG answer card (Phase 7). A question always routes
+    to semantic search; this additionally distinguishes "answer me" from a plain
+    semantic lookup that only wants ranked documents.
+    """
+    text = (query or "").strip().lower()
+    return _looks_like_question(text, _WORD_RE.findall(text))
+
+
 def route(query: str) -> Route:
     """Classify a query into a structured filter or a semantic search."""
     text = (query or "").strip().lower()
