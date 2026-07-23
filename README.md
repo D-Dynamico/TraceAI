@@ -346,6 +346,10 @@ this belt-and-braces rule — it holds nothing that is not regenerable from
 
 ## Tests
 
+The backend is tested with pytest; the frontend with vitest + Testing Library
+(see [Frontend](#frontend) below). Both run offline by default — no network, no
+API quota.
+
 ```bash
 cd backend
 pytest              # 313 tests, no network, ~1 min
@@ -419,3 +423,27 @@ Phase 5 added a second isolation assertion at the graph layer: breaking the
 `WHERE user_id` filter in `database.list_documents` leaks a foreign document
 into `GET /api/graph` and turns `test_graph_excludes_other_users_documents` red
 — likewise mutation-verified.
+
+### Frontend
+
+```bash
+cd frontend
+npm test            # 30 tests (vitest run), jsdom, ~10s
+npm run test:watch  # same, in watch mode
+```
+
+Runs under jsdom with Testing Library. Nothing hits the network: the API layer
+(`src/api/client.js`) talks to a stubbed `global.fetch`, mirroring how the
+backend suite stubs `safe_get`. Tests are co-located as `*.test.js(x)` beside
+the code they cover.
+
+| File                        | Covers                                                   |
+| --------------------------- | -------------------------------------------------------- |
+| `categories.test.js`        | The palette mapping is total, unknown categories fall to the neutral ink, and no category resolves to the reserved career-path slate |
+| `components/cardParts.test.jsx` | `formatMonth` never invents a day; `knownDate` keeps an *assumed* date out of the meta line (the § Risk Mitigation flag); `formatLabel` is total |
+| `api/client.test.js`        | The `handle()` error contract — backend `detail`, status fallback, non-JSON body — plus request shapes, incl. multipart upload |
+| `components/LoadDemoButton.test.jsx` | The visible-change contract — seed resolves before the refetch, disables in flight, a failed seed shows the error and does not refetch |
+| `components/Timeline.test.jsx` | Year grouping, newest/oldest toggle, **undated-last in both directions** (the `effective_date` rule), present-only chips, category filtering |
+
+The frontend suite was validated by mutation the same way as the backend:
+flipping Timeline's undated-last comparison turns the matching grouping test red.
