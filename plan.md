@@ -601,7 +601,7 @@ TraceAI/
 | **Phase 2** | Gemini categorization + SQLite storage | 3 hours | ✅ done |
 | **Phase 3** | URL ingestion (GitHub, web) + written-response input | 2 hours | ✅ done |
 | **Phase 4** | Embeddings + ChromaDB + semantic search | 3 hours | ✅ done |
-| **Phase 5** | Relationship engine + career path inference + graph | 3 hours | ◑ backend done (`/api/graph`, `/api/career-paths`); force-directed graph UI (View 3) pending |
+| **Phase 5** | Relationship engine + career path inference + graph | 3 hours | ✅ done (backend + d3-force graph UI, View 3) |
 | **Phase 6** | Timeline view + search UI | 2 hours | ✅ done (Views 2 & 4) |
 | **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours | ⬜ next |
 | **Phase 8** | Sample demo dataset + seed script | 1 hour | ⬜ |
