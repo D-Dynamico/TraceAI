@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from db import database
-from routes import career, documents, graph, search, upload
+from routes import career, documents, graph, search, seed, upload
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -54,6 +54,7 @@ app.include_router(documents.router)
 app.include_router(search.router)
 app.include_router(graph.router)
 app.include_router(career.router)
+app.include_router(seed.router)
 
 
 @app.get("/api/health")

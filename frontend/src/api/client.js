@@ -85,6 +85,14 @@ export async function inferCareerPaths() {
   return handle(res);
 }
 
+// Load the demo profile (plan.md §14) — a 10-document student journey, seeded
+// server-side with no Gemini call. Idempotent: re-loading replaces the prior
+// demo docs rather than duplicating them.
+export async function seedDemo() {
+  const res = await fetch("/api/seed-demo", { method: "POST" });
+  return handle(res);
+}
+
 export async function health() {
   const res = await fetch("/api/health");
   return handle(res);

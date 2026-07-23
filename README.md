@@ -14,11 +14,12 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 - ✅ Phase 2 — Gemini categorization + SQLite storage
 - ✅ Phase 3 — URL ingestion + written-response input
 - ✅ Phase 4 — Embeddings + ChromaDB + semantic search
-- ◑ **Phase 5 — Relationship graph + career-path inference** — backend done
-  (`/api/graph`, `/api/career-paths`); the force-directed graph UI (View 3) is
-  the next build
-- ✅ **Phase 6 — Timeline view + search UI** (current)
-- ⬜ Phase 7+ — RAG answer card, demo seed, deployment
+- ✅ Phase 5 — Relationship graph + career-path inference (`/api/graph`,
+  `/api/career-paths`) + the d3-force graph UI (View 3)
+- ✅ Phase 6 — Timeline view + search UI (Views 2 & 4)
+- ✅ Phase 7 — RAG pipeline + synthesized answer card (`/api/answer`)
+- ✅ **Phase 8 — demo seed dataset + "Load Demo Profile" button** (current)
+- ⬜ Phase 9+ — UI polish, deployment, deliverables
 
 ### Phase 1 capabilities
 - Upload PDF / DOCX / PPTX / TXT / images.
@@ -186,6 +187,48 @@ validator results and the two candidate orderings that failed.
   dark slate plus larger size, placement, and a mandatory label
   (`CAREER_PATH_COLOR`).
 
+### Phase 7 capabilities (RAG answer card)
+
+- **Synthesized answers, grounded in your own documents.** A question-shaped
+  query ("how does my Python cert connect to my internship?") now returns a
+  Gemini-written answer above the sources, not just a ranked list. `/api/search`
+  stays instant and paints the sources immediately; a separate `POST /api/answer`
+  then synthesizes over **exactly the documents search returned** — no second
+  vector query, so the answer can only cite what the user can see.
+- **Grounding over fluency.** The prompt forbids anything outside the provided
+  sources and is told to say so when they don't cover the question; citation
+  indices outside the given set are dropped. The card marks which source rows
+  the answer actually cited (a "cited" badge/ring), so a reviewer can check the
+  answer against its evidence.
+- **A third Gemini caller, same contracts.** `ai/rag.py::synthesize` reuses the
+  one shared rate limiter and the item-B degradation contract as-is — like the
+  categorizer and career-path inference it **never raises and never fabricates**:
+  any failure returns no answer plus a structured `degraded_reason`, and the UI
+  degrades to sources-only rather than inventing an answer on a quota wall.
+
+### Phase 8 capabilities (demo seed)
+
+- **"Load Demo Profile" button.** The empty timeline and empty graph each carry a
+  one-click CTA (plan.md §6: "empty states seed the demo") that populates a
+  realistic 10-document student journey — a 2023 Python certificate through a
+  2026 resume and portfolio — so a reviewer arriving at an empty app sees the
+  graph, timeline, and search working on real material immediately.
+- **Backed by `POST /api/seed-demo`** and the runnable
+  `seed/seed_demo.py` (`PYTHONPATH=backend python -m seed.seed_demo`). Both call
+  the same loader, which inserts directly through `database.insert_document` +
+  `embeddings.add_document` with **no Gemini call** — categories and skills are
+  hand-authored — so it is fast and costs no quota.
+- **Tuned so the graph is impressive.** Skills are authored so a **Python skill
+  hub** wires the cert → project → internship → resume chain plan.md §3 names,
+  and every document is written at full length so Layer-B `similar_to` edges
+  (cosine > 0.75) actually form — four of them, on the real embedding model.
+  (Career-path nodes still come from the graph's "Infer career paths" button, a
+  real Gemini call; the dataset is tuned so inference lands on AI/ML Engineer.)
+- **Idempotent and non-destructive.** Demo documents use deterministic `demo-*`
+  ids; re-loading replaces the prior demo set rather than duplicating it, and the
+  clear is scoped to `demo-*` — a reviewer's own uploads survive a re-seed. Every
+  demo document is fileless (`url` / `text_entry`, no original file).
+
 ### Original Format Preservation
 
 Treated as a hard guarantee, enforced in code and covered by tests:
@@ -269,7 +312,9 @@ cd backend
 | POST   | `/api/upload`                   | Multipart upload → extracted text + sha256 + categorization |
 | POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored; GitHub repos/profiles also return a `details` object |
 | POST   | `/api/ingest-text`              | `{ "text": "..." }` → written response, categorized + stored |
-| POST   | `/api/search`                   | `{ "query": "...", "k": 5 }` → routed to a SQL filter or semantic vector search; ranked source documents |
+| POST   | `/api/search`                   | `{ "query": "...", "k": 5 }` → routed to a SQL filter or semantic vector search; ranked source documents. `answerable` flags a question-shaped query for the answer card |
+| POST   | `/api/answer`                   | `{ "query": "...", "doc_ids": [...] }` → Gemini-synthesized RAG answer grounded in those documents, with citations + any degradation |
+| POST   | `/api/seed-demo`                | Load the 10-document demo profile (plan.md §14); idempotent, no Gemini call |
 | GET    | `/api/graph`                    | `{ nodes, edges }` for the knowledge graph — documents, skill hubs, career paths, and their edges |
 | POST   | `/api/career-paths`             | Infer career trajectories over the whole profile (Gemini); persists and returns them + any degradation |
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
@@ -303,9 +348,9 @@ this belt-and-braces rule — it holds nothing that is not regenerable from
 
 ```bash
 cd backend
-pytest              # 294 tests, no network, ~1 min
+pytest              # 313 tests, no network, ~1 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
-pytest -m live      # 4 more that call the real Gemini API (needs a key, ~1 min)
+pytest -m live      # 5 more that call the real Gemini API (needs a key, ~1 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
 ```
 
@@ -332,8 +377,10 @@ actually ranks first.
 | `test_graph_api.py`      | `/api/graph` nodes/edges, career merge, and **mutation-tested user isolation** |
 | `test_career_path.py`    | Career-path inference — index mapping, clamping, never-raises, no-wipe on degrade |
 | `test_degradation.py`    | The item B contract — reason→retryable table and exception classification |
+| `test_rag.py`            | RAG synthesis — grounding, citation clamping, never-raises/degrades, `/api/answer` |
+| `test_seed.py`           | Demo seed — endpoint, idempotency, non-destructive re-seed, the Python skill hub |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
-| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path inference |
+| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference |
 
 `live` tests are deselected by default because they cost free-tier quota and
 need network. They are the only tests that catch a retired model id, a changed

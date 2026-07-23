@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listDocuments } from "../api/client";
 import { CATEGORY_COLORS, categoryColor } from "../categories";
+import LoadDemoButton from "./LoadDemoButton";
 import TimelineEntry from "./TimelineEntry";
 
 // The journey view (plan.md §6 View 2). This is also the persistent "load
@@ -21,14 +22,19 @@ export default function Timeline() {
   const [newestFirst, setNewestFirst] = useState(true);
   const [filter, setFilter] = useState("All");
 
-  useEffect(() => {
-    listDocuments()
-      .then(setDocs)
-      .catch((e) => {
-        setError(e.message);
-        setDocs([]);
-      });
+  const load = useCallback(async () => {
+    try {
+      setError("");
+      setDocs(await listDocuments());
+    } catch (e) {
+      setError(e.message);
+      setDocs([]);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   // Categories actually present, in the palette's canonical order — no dead
   // chips for categories nobody has uploaded.
@@ -88,6 +94,12 @@ export default function Timeline() {
           Head to <span className="font-medium">Upload</span> to add documents,
           URLs, or achievements — they’ll appear here in order.
         </p>
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <LoadDemoButton onLoaded={load} />
+          <p className="text-xs text-slate-400">
+            or load a sample student journey to explore the app
+          </p>
+        </div>
       </div>
     );
   }

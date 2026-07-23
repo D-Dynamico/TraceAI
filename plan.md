@@ -604,7 +604,7 @@ TraceAI/
 | **Phase 5** | Relationship engine + career path inference + graph | 3 hours | ✅ done (backend + d3-force graph UI, View 3) |
 | **Phase 6** | Timeline view + search UI | 2 hours | ✅ done (Views 2 & 4) |
 | **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours | ✅ done (`ai/rag.py`, `/api/answer`, answer card) |
-| **Phase 8** | Sample demo dataset + seed script | 1 hour | ⬜ |
+| **Phase 8** | Sample demo dataset + seed script | 1 hour | ✅ done (`seed/seed_demo.py`, `/api/seed-demo`, "Load Demo Profile" button) |
 | **Phase 9** | UI polish, testing with real docs, edge cases | 2 hours | ⬜ |
 | **Phase 10** | Deployment (Vercel + Render) | 2 hours | ⬜ |
 | **Phase 11** | Demo video, README, architecture diagram, thought process | 2 hours | ⬜ |

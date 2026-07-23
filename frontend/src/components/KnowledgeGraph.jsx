@@ -11,6 +11,7 @@ import {
 import { getGraph, inferCareerPaths } from "../api/client";
 import { CAREER_PATH_COLOR, categoryColor } from "../categories";
 import { DEGRADED_COPY } from "./cardParts";
+import LoadDemoButton from "./LoadDemoButton";
 import NodeDetailPanel from "./NodeDetailPanel";
 
 // View 3 — the knowledge graph (plan.md §6). A d3-force simulation rendered as
@@ -320,6 +321,12 @@ export default function KnowledgeGraph() {
           the graph draws their skills, similarities, and career paths as they
           connect.
         </p>
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <LoadDemoButton onLoaded={load} />
+          <p className="text-xs text-slate-400">
+            or load a sample profile to see the graph light up
+          </p>
+        </div>
       </div>
     );
   }
