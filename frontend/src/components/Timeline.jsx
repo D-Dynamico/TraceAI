@@ -145,7 +145,7 @@ export default function Timeline() {
             </h3>
             <ol>
               {group.items.map((doc) => (
-                <TimelineEntry key={doc.id} doc={doc} />
+                <TimelineEntry key={doc.id} doc={doc} onDeleted={load} />
               ))}
             </ol>
           </section>

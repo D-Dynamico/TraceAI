@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getDocument } from "../api/client";
+import { deleteDocument, getDocument } from "../api/client";
 import { categoryColor } from "../categories";
 import {
   CategoryBadge,
@@ -16,11 +16,30 @@ import {
 // encoding — a hollow ring instead of a filled dot, plus an amber label —
 // because on the timeline an assumed date otherwise "just looks like a document
 // from today" (see cardParts.AssumedDateNotice). Color alone is never the flag.
-export default function TimelineEntry({ doc }) {
+export default function TimelineEntry({ doc, onDeleted }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
+  // Delete is a two-step inline confirm — a destructive action gated behind a
+  // second click, not a browser confirm() dialog. On success the parent
+  // refetches (onDeleted), which unmounts this entry.
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [delError, setDelError] = useState("");
   const assumed = doc.date_source === "assumed";
   const color = categoryColor(doc.category);
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDelError("");
+    try {
+      await deleteDocument(doc.id);
+      onDeleted?.(doc.id);
+      // No state reset on success — the refetch unmounts this component.
+    } catch (e) {
+      setDelError(e.message);
+      setDeleting(false);
+    }
+  }
 
   async function toggle() {
     const next = !open;
@@ -96,13 +115,42 @@ export default function TimelineEntry({ doc }) {
                 <Chips label="Tags" items={detail.tags} />
               </div>
             )}
-            <div className="mt-3">
+            <div className="mt-3 flex items-center justify-between gap-2">
               <OriginalAction
                 id={doc.id}
                 hasOriginal={doc.has_original}
                 sourceUrl={doc.source_url}
               />
+              {!confirming ? (
+                <button
+                  onClick={() => setConfirming(true)}
+                  className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                >
+                  Delete
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-2 text-xs">
+                  <span className="text-slate-500">Delete this?</span>
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="rounded-md border border-red-300 bg-red-50 px-2 py-1 font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {deleting ? "Deleting…" : "Delete"}
+                  </button>
+                  <button
+                    onClick={() => setConfirming(false)}
+                    disabled={deleting}
+                    className="rounded-md px-2 py-1 font-medium text-slate-500 transition hover:text-slate-700 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </span>
+              )}
             </div>
+            {delError && (
+              <p className="mt-2 text-xs text-red-600">{delError}</p>
+            )}
           </div>
         )}
       </div>

@@ -72,6 +72,13 @@ export async function recategorize(id) {
   return handle(res);
 }
 
+// Hard-delete a document from every store (SQLite, the vector index, and the
+// original file + sidecar for an uploaded file). Scoped to the user server-side.
+export async function deleteDocument(id) {
+  const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
+  return handle(res);
+}
+
 export async function getGraph() {
   const res = await fetch("/api/graph");
   return handle(res);
