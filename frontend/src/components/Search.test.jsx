@@ -114,6 +114,42 @@ describe("Search routing", () => {
   });
 });
 
+describe("Search Ask AI", () => {
+  it("offers Ask AI on a non-question query and synthesizes on click", async () => {
+    // A filter query does not auto-answer; the button is the on-demand path.
+    vi.spyOn(client, "search").mockResolvedValue(filterResponse());
+    const answer = vi
+      .spyOn(client, "answer")
+      .mockResolvedValue({ answer: "Synthesized over your certs.", cited_doc_ids: ["d1"] });
+
+    render(<Search />);
+    await searchFor("show all my certificates");
+
+    // Sources are up; nothing has been synthesized yet.
+    expect(await screen.findByText("Python Cert")).toBeInTheDocument();
+    expect(answer).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /ask ai/i }));
+
+    // Grounded in exactly the shown results.
+    await waitFor(() =>
+      expect(answer).toHaveBeenCalledWith("show all my certificates", ["d1"]),
+    );
+    expect(await screen.findByText(/synthesized over your certs/i)).toBeInTheDocument();
+  });
+
+  it("does not offer Ask AI for a question query — it already auto-answers", async () => {
+    vi.spyOn(client, "search").mockResolvedValue(questionResponse());
+    const answer = vi.spyOn(client, "answer").mockResolvedValue({ answer: "Auto.", cited_doc_ids: [] });
+
+    render(<Search />);
+    await searchFor("how does my cert connect to my internship?");
+
+    await waitFor(() => expect(answer).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /ask ai/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("Search suggested chips", () => {
   it("runs a suggested query on click and hides the chips after", async () => {
     const search = vi.spyOn(client, "search").mockResolvedValue(filterResponse());

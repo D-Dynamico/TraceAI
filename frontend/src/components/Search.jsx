@@ -113,14 +113,31 @@ export default function Search() {
 
       {response && (
         <div className="space-y-3">
-          {/* Answer card (plan.md §6 View 4) — question queries only, above the
-              sources. Its own loading/degraded state; the sources never wait on it. */}
-          {response.answerable && (answerBusy || answerData) && (
+          {/* Answer card (plan.md §6 View 4), above the sources. Shown whenever a
+              synthesis was triggered — the auto-fire for question queries, or the
+              explicit "Ask AI" button below. Its own loading/degraded state; the
+              sources never wait on it. */}
+          {(answerBusy || answerData) && (
             <AnswerCard
               loading={answerBusy}
               data={answerData}
               onRetry={() => loadAnswer(response.query, response.results)}
             />
+          )}
+
+          {/* Explicit "Ask AI" for queries that don't auto-answer. Query
+              *understanding* is deterministic and Gemini is reserved for answer
+              synthesis (query_router.py), which auto-fires only for question-shaped
+              queries — so a filter or a plain semantic search would otherwise never
+              offer an AI answer. This gives one on demand, over exactly the results
+              shown (grounding), without touching the instant-search path. */}
+          {response.count > 0 && !response.answerable && !answerBusy && !answerData && (
+            <button
+              onClick={() => loadAnswer(response.query, response.results)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
+            >
+              <span aria-hidden="true">✨</span> Ask AI about these results
+            </button>
           )}
 
           <p className="text-xs text-slate-500">
