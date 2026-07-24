@@ -247,6 +247,32 @@ def update_categorization(
             )
 
 
+def delete_document(doc_id: str, user_id: str = "demo") -> bool:
+    """Delete a document plus its entity/tag rows. Returns True if it existed.
+
+    Scoped to `user_id` — the same isolation boundary `list_documents` and the
+    graph enforce, so one user cannot delete another's document once auth lands
+    (plan.md § Stretch Goals). Entities and tags are removed explicitly rather
+    than left to `ON DELETE CASCADE`, mirroring `update_categorization` and not
+    depending on the per-connection foreign_keys pragma. The vector store and any
+    original file are cleaned by the caller (they are derived / on-disk, not part
+    of this SQL transaction).
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM documents WHERE id = ? AND user_id = ?",
+            (doc_id, user_id),
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM entities WHERE document_id = ?", (doc_id,))
+        conn.execute("DELETE FROM tags WHERE document_id = ?", (doc_id,))
+        conn.execute(
+            "DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id)
+        )
+    return True
+
+
 def set_embedding_id(doc_id: str, embedding_id: str) -> None:
     """Mark a document as indexed in the vector store.
 

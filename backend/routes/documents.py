@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import storage
+from ai import embeddings
 from db import database
 from models.document import DocumentDetail, DocumentSummary
 
@@ -35,6 +36,11 @@ class IntegrityResponse(BaseModel):
     checksum: str
     size_bytes: int
     verified: bool
+
+
+class DeleteResponse(BaseModel):
+    id: str
+    deleted: bool
 
 
 def _lookup(doc_id: str):
@@ -65,6 +71,34 @@ def get_document(doc_id: str) -> DocumentDetail:
     if row is None:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
     return DocumentDetail.model_validate(row)
+
+
+@router.delete("/{doc_id}", response_model=DeleteResponse)
+def delete_document(doc_id: str) -> DeleteResponse:
+    """Delete a document from every store: SQLite (the row plus its entity/tag
+    rows), the vector index, and — for an uploaded file — the original and its
+    sidecar. Returns 404 if the document does not exist for this user.
+
+    The authoritative SQLite row is removed first; the derived stores are then
+    cleaned best-effort. If one of those hiccups it leaves a harmless orphan
+    (an unindexed vector, or a file with no row), never a dangling record that
+    outlives its document — search hydrates from SQLite, so an orphan vector
+    cannot surface, and the download path needs a row that no longer exists.
+    """
+    existed = database.delete_document(doc_id, DEFAULT_USER)
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
+
+    try:
+        embeddings.delete_document(doc_id)
+    except Exception:
+        logger.exception("Failed to delete embeddings for %s", doc_id)
+    try:
+        storage.delete_original(doc_id, DEFAULT_USER)
+    except Exception:
+        logger.exception("Failed to delete original file for %s", doc_id)
+
+    return DeleteResponse(id=doc_id, deleted=True)
 
 
 @router.get("/{doc_id}/verify", response_model=IntegrityResponse)

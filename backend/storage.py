@@ -140,5 +140,25 @@ def verify_integrity(stored_path: Path, manifest: DocumentManifest) -> bool:
     return sha256_file(stored_path) == manifest.checksum
 
 
+def delete_original(doc_id: str, user_id: str) -> bool:
+    """Remove a stored original and its sidecar. Returns True if a file was removed.
+
+    Deleting a whole document at the user's request is a *removal*, not the
+    forbidden in-place *modification* of a preserved original (CLAUDE.md): the
+    guarantee is that an original is never altered after being written, not that
+    it can never be deleted. Fileless documents (url / text_entry) have no
+    original on disk, so `find_by_id` returns None and this is a harmless no-op.
+    Uses `missing_ok` so a half-cleaned state (file gone, sidecar left, or vice
+    versa) still fully clears rather than raising.
+    """
+    found = find_by_id(doc_id, user_id)
+    if found is None:
+        return False
+    stored_path, _ = found
+    stored_path.unlink(missing_ok=True)
+    manifest_path_for(stored_path).unlink(missing_ok=True)
+    return True
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
