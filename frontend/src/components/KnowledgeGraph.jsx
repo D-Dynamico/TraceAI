@@ -33,11 +33,11 @@ const HEIGHT = 560;
 // composite encoding (categories.js) — and skills the smallest so the document
 // hubs read as the primary objects.
 const RADIUS = { document: 10, skill: 7, career_path: 18 };
-function radiusOf(node) {
+export function radiusOf(node) {
   return RADIUS[node.type] ?? 9;
 }
 
-function colorOf(node) {
+export function colorOf(node) {
   if (node.type === "career_path") return CAREER_PATH_COLOR;
   if (node.type === "skill") return categoryColor("Skills");
   return categoryColor(node.category);
@@ -45,11 +45,11 @@ function colorOf(node) {
 
 // Similarity edges (Layer B) are the "non-obvious connection" link and read as
 // dashed; the entity/career chain edges are solid.
-function isDashed(relation) {
+export function isDashed(relation) {
   return relation === "similar_to";
 }
 
-function edgeId(link) {
+export function edgeId(link) {
   const s = typeof link.source === "object" ? link.source.id : link.source;
   const t = typeof link.target === "object" ? link.target.id : link.target;
   return `${s}->${t}`;
@@ -61,7 +61,7 @@ function endpointId(end) {
 // Precompute everything derived from the raw {nodes, edges}: the mutable node/
 // link arrays d3 will own, a neighbour lookup for the highlight interaction, and
 // a per-node connection list for the detail panel.
-function buildModel(data) {
+export function buildModel(data) {
   const nodes = data.nodes.map((n) => ({ ...n }));
   const links = data.edges.map((e) => ({ ...e }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
