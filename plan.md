@@ -606,10 +606,21 @@ TraceAI/
 | **Phase 6** | Timeline view + search UI | 2 hours | ✅ done (Views 2 & 4) |
 | **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours | ✅ done (`ai/rag.py`, `/api/answer`, answer card) |
 | **Phase 8** | Sample demo dataset + seed script | 1 hour | ✅ done (`seed/seed_demo.py`, `/api/seed-demo`, "Load Demo Profile" button) |
-| **Phase 9** | UI polish, testing with real docs, edge cases | 2 hours | ⬜ |
+| **Phase 9** | UI polish, testing with real docs, edge cases — frontend test suite (vitest, 107 tests), document delete, explicit "Ask AI" search **done**; manual category override + real-doc testing **next** | 2 hours | ⬜ |
 | **Phase 10** | Deployment (Vercel + Render) | 2 hours | ⬜ |
 | **Phase 11** | Demo video, README, architecture diagram, thought process | 2 hours | ⬜ |
 | **Total** | | **~25 hours** | |
+
+> **Planned next — manual category override (deferred from Phase 9's browser review).**
+> Let the user reclassify a document from its timeline entry. Categorization is a
+> Gemini judgment against the fixed six-category taxonomy (§4 Module 2), and a
+> whole GitHub *profile* has no clean fit — it lands in *Projects*. Rather than
+> fight the model, allow an explicit override, which also completes the
+> § Risk Mitigation "allow manual override" mitigation. Same timeline-entry
+> surface as the delete action. Two other items from that review already shipped
+> in Phase 9: **document delete** (`DELETE /api/documents/{id}`, cleaning SQLite +
+> vectors + the original/sidecar) and an **explicit "Ask AI" button** on search
+> (on-demand RAG synthesis for queries that don't auto-answer).
 
 ---
 

@@ -18,8 +18,11 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
   `/api/career-paths`) + the d3-force graph UI (View 3)
 - ✅ Phase 6 — Timeline view + search UI (Views 2 & 4)
 - ✅ Phase 7 — RAG pipeline + synthesized answer card (`/api/answer`)
-- ✅ **Phase 8 — demo seed dataset + "Load Demo Profile" button** (current)
-- ⬜ Phase 9+ — UI polish, deployment, deliverables
+- ✅ Phase 8 — demo seed dataset + "Load Demo Profile" button
+- 🚧 **Phase 9 — UI polish + edge cases** (current): frontend test suite (vitest,
+  107 tests), document delete, explicit "Ask AI" search done; manual category
+  override + real-doc testing next
+- ⬜ Phase 10+ — deployment, deliverables
 
 ### Phase 1 capabilities
 - Upload PDF / DOCX / PPTX / TXT / images.
@@ -229,6 +232,29 @@ validator results and the two candidate orderings that failed.
   clear is scoped to `demo-*` — a reviewer's own uploads survive a re-seed. Every
   demo document is fileless (`url` / `text_entry`, no original file).
 
+### Phase 9 capabilities (in progress — UI polish + edge cases)
+
+- **Document delete.** `DELETE /api/documents/{id}` removes a document from every
+  store it lives in — its SQLite row plus entity/tag rows, its vector chunks, and,
+  for an uploaded file, the original and its `.meta.json` sidecar. Deleting a whole
+  document at the user's request is a *removal*, not the forbidden in-place
+  *modification* of a preserved original. The authoritative SQLite row goes first
+  and the derived stores are cleaned best-effort, so a hiccup leaves a harmless
+  orphan, never a record that outlives its document. Scoped to `user_id` (the same
+  isolation boundary the graph enforces) and mutation-tested. In the UI, each
+  timeline entry gains a Delete action behind a two-step inline confirm.
+- **Explicit "Ask AI" on search.** Query *understanding* stays deterministic and
+  Gemini is reserved for answer *synthesis*, which auto-fires only for
+  question-shaped queries. A filter or plain semantic search would otherwise never
+  offer an AI answer, so an **Ask AI about these results** button synthesizes one
+  on demand — grounded in exactly the sources shown — without touching the
+  instant-search path.
+- **Frontend test suite.** The React app now has 107 vitest + Testing Library
+  tests where it had none (see [Frontend](#frontend)).
+- **Next:** manual category override (reclassify a document from its timeline
+  entry — a whole GitHub profile lands in *Projects* under the fixed taxonomy) and
+  real-document edge-case testing.
+
 ### Original Format Preservation
 
 Treated as a hard guarantee, enforced in code and covered by tests:
@@ -320,6 +346,7 @@ cd backend
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
 | POST   | `/api/documents/{id}/recategorize` | Re-run categorization over the preserved text (the retry path); updates the row in place |
+| DELETE | `/api/documents/{id}`           | Delete a document from every store — SQLite, vectors, and the original + sidecar; user-scoped |
 | GET    | `/api/documents/{id}/download`  | Original file, integrity-verified                       |
 | GET    | `/api/documents/{id}/verify`    | Recompute checksum, report match                        |
 
@@ -352,7 +379,7 @@ API quota.
 
 ```bash
 cd backend
-pytest              # 313 tests, no network, ~1 min
+pytest              # 319 tests, no network, ~1 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 5 more that call the real Gemini API (needs a key, ~1 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
@@ -383,6 +410,7 @@ actually ranks first.
 | `test_degradation.py`    | The item B contract — reason→retryable table and exception classification |
 | `test_rag.py`            | RAG synthesis — grounding, citation clamping, never-raises/degrades, `/api/answer` |
 | `test_seed.py`           | Demo seed — endpoint, idempotency, non-destructive re-seed, the Python skill hub |
+| `test_delete.py`         | Document deletion across SQLite, vectors, and the file/sidecar; **user-scoped isolation** |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference |
 
@@ -428,7 +456,7 @@ into `GET /api/graph` and turns `test_graph_excludes_other_users_documents` red
 
 ```bash
 cd frontend
-npm test            # 30 tests (vitest run), jsdom, ~10s
+npm test            # 107 tests (vitest run), jsdom, ~25s
 npm run test:watch  # same, in watch mode
 ```
 
@@ -444,6 +472,21 @@ the code they cover.
 | `api/client.test.js`        | The `handle()` error contract — backend `detail`, status fallback, non-JSON body — plus request shapes, incl. multipart upload |
 | `components/LoadDemoButton.test.jsx` | The visible-change contract — seed resolves before the refetch, disables in flight, a failed seed shows the error and does not refetch |
 | `components/Timeline.test.jsx` | Year grouping, newest/oldest toggle, **undated-last in both directions** (the `effective_date` rule), present-only chips, category filtering |
+| `components/KnowledgeGraph.test.jsx` | The graph's pure model helpers — `buildModel` (drops edges with a missing endpoint, dedups neighbours, bidirectional connections), `colorOf` / `radiusOf` / `isDashed` / `edgeId` |
+| `components/AnswerCard.test.jsx` | The three honest states — loading / answered + source count / degraded — and **never-fabricate** on a degraded payload |
+| `components/ResultCard.test.jsx` | The item-B retry end to end (recategorize in place, stale warning dropped) and the file-vs-fileless download branch |
+| `components/SourceRow.test.jsx` | The § Risk Mitigation assumed-date rule at the row, the cited badge, and the download/open-source branch |
+| `components/Search.test.jsx` | Filter-vs-question routing, RAG grounded in the returned ids, sources-only degrade, and the explicit **Ask AI** button |
+| `components/Upload.test.jsx` | File / URL / text routing and the deferred item-A **per-input independence** (files busy must not disable the URL input) |
+| `components/GitHubCard.test.jsx` | The repo vs profile shapes, the repo-list cap disclosure, and the Upload dispatch that selects this card |
+| `components/TimelineEntry.test.jsx` | The delete flow — the two-step confirm gate, notify-parent-to-refetch on success, keep-and-error on failure |
+
+The `cardParts` suite also covers the rule-bearing shared primitives —
+`Confidence` (0.0 is the couldn't-classify warning, not an empty meter),
+`DegradedNotice` (behaves on the `retryable` flag), and `OriginalAction`.
 
 The frontend suite was validated by mutation the same way as the backend:
-flipping Timeline's undated-last comparison turns the matching grouping test red.
+flipping Timeline's undated-last comparison reddens the matching grouping test,
+and every suite added since was validated the same way (e.g. dropping the
+knowledge-graph missing-endpoint guard, suppressing the Ask AI button, or wiring
+delete past its confirm each reddens exactly the test that asserts it).
