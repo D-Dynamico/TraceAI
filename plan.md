@@ -28,7 +28,7 @@ The brief states this twice, so it is treated as a hard guarantee:
 | ---------------- | ----------------------------------------------------- |
 | Frontend         | React (Vite) + Tailwind CSS                           |
 | Backend          | Python (FastAPI)                                       |
-| LLM              | Google Gemini 3 Flash — free tier (10 RPM, 1500 RPD) |
+| LLM              | Google Gemini 3 Flash — free tier (**5 RPM, 20 RPD**) |
 | Embeddings       | `sentence-transformers` (all-MiniLM-L6-v2) — local    |
 | Vector DB        | ChromaDB                                               |
 | Structured DB    | SQLite                                                 |
@@ -42,9 +42,23 @@ The brief states this twice, so it is treated as a hard guarantee:
 
 > **Why Gemini 3 Flash?**
 > The Gemini 2.0 series was retired in June 2026. Gemini 3 Flash is Google's current
-> recommended free-tier model — 10 RPM, 1,500 requests/day, 1M token context window,
-> with built-in vision support. Combined with local sentence-transformers for embeddings,
-> the entire AI stack runs at **zero cost**.
+> recommended free-tier model — 1M token context window, with built-in vision
+> support. Combined with local sentence-transformers for embeddings, the entire AI
+> stack runs at **zero cost**.
+>
+> **The free tier is 5 RPM and 20 requests per _day_**, measured 2026-07-25 from
+> the API's own 429 payloads (`GenerateRequestsPerMinutePerProjectPerModel-FreeTier`
+> → `limit: 5`; `GenerateRequestsPerDayPerProjectPerModel-FreeTier` →
+> `limit: 20`, model `gemini-3-flash`). This document previously claimed 10 RPM /
+> 1500 RPD. Google no longer publishes per-model free-tier limits — the docs defer
+> to AI Studio — so an enforced quota in a live 429 is the best evidence available,
+> and better than a doc table, being this key's actual limit.
+>
+> **20/day is the binding constraint on the whole design.** A scanned upload costs
+> two calls (Vision OCR, then categorization), and §10's demo script would spend a
+> day's quota by itself. Two consequences already built: every Gemini caller
+> degrades rather than fails, and §14's "Load Demo Profile" issues **no Gemini call
+> at all** — which makes it load-bearing for any live demo, not a convenience.
 
 ---
 
@@ -686,7 +700,7 @@ TraceAI/
 
 | Risk | Mitigation |
 |---|---|
-| Gemini free tier rate limits (10 RPM, 1500/day) | Cache responses, batch processing, queue uploads |
+| Gemini free tier rate limits (**5 RPM, 20/day** — see §2) | Serialized by one shared 13s limiter, which covers RPM. **RPD is not mitigated:** cache/batch/queue are still unbuilt, so the day's 20th call degrades. Demo from §14's seed, which spends none |
 | OCR accuracy on scans | Fallback to Gemini 3 Flash Vision (free) |
 | Slow embedding generation | Pre-compute on upload, async processing |
 | No date in document | Use upload date as fallback, flag for user review |

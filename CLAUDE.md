@@ -73,8 +73,24 @@ These have each cost real time. Read before running anything.
   spends quota on documents that never needed it — mutation-tested.
 - Anything that logs an exception from the Gemini SDK must pass it through
   `_redact()` — on the REST transport those messages can carry `?key=<api key>`.
-- Gemini free tier is 10 RPM / 1500 RPD. Calls are serialized by a rate limiter
-  that holds its lock across the sleep. This is deliberate; do not parallelize.
+- Gemini free tier is **5 RPM and 20 requests per DAY** — not the "10 RPM /
+  1500 RPD" this repo assumed until 2026-07-25. Both numbers come from live 429
+  payloads, because the docs no longer publish per-model free-tier limits:
+  `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` → `limit: 5`, and
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier` → `limit: 20`, model
+  `gemini-3-flash`. The limiter is 13s, which handles RPM. **Nothing handles the
+  20/day** — spacing cannot; see plan.md §11's unbuilt cache/batch/queue.
+- **20/day is the binding constraint on everything.** Budget before spending:
+  a full `pytest -m live` run is **8 calls — 40% of the day**, so two runs and
+  the day is gone. A scanned upload is 2 calls. The plan.md §10 demo script
+  ("upload 8-10 documents") would consume a whole day's quota by itself, which
+  is why **"Load Demo Profile" makes no Gemini call at all** — Phase 8's design
+  is now load-bearing, not a convenience.
+- Calls are serialized by a rate limiter that holds its lock across the sleep.
+  Deliberate; do not parallelize.
+- **A scanned upload costs two Gemini calls** (Vision OCR, then
+  categorization), so ~26s at 13s spacing. Budget for it in any test or demo
+  that uploads several scans.
 - **Never call `requests.get()` on a user-supplied URL.** Go through
   `ingestion/url_guard.py::safe_get`, which validates the scheme, rejects hosts
   resolving to non-public addresses, re-validates every redirect hop, and caps

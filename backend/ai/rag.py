@@ -10,7 +10,7 @@ it **never raises**: any failure returns no answer plus a structured
 `degraded_reason` (`ai/degradation.py`), so the search view falls back to
 sources-only with an honest notice rather than a fabricated answer — the whole
 point of item B. It shares the one global rate limiter (`ai/gemini.py`); the
-10 RPM budget is per-key across all three callers.
+5 RPM budget (measured; see `ai/gemini.py`) is per-key across all four callers.
 
 Grounding is the design priority, because the 40% criterion rewards *trustworthy*
 retrieval, not fluent invention: the prompt forbids using anything outside the

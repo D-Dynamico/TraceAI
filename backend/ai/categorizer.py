@@ -13,8 +13,10 @@ defined in the plan. Three things this module takes seriously:
    `confidence = 0.0` and a reason recorded, so the UI can flag it for review
    (plan.md § Risk Mitigation, "ambiguous categorization").
 
-3. **The free tier is 10 RPM.** `_RateLimiter` serializes calls with a minimum
-   interval so a batch upload cannot trip the quota.
+3. **The free tier is 5 RPM** — measured from a live 429, not the 10 assumed
+   until 2026-07-25; see the constant in `ai/gemini.py`. The shared rate limiter
+   serializes calls with a minimum interval so a batch upload cannot trip the
+   quota.
 """
 
 from __future__ import annotations

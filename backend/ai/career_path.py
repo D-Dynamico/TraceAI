@@ -10,8 +10,8 @@ Like `ai/categorizer.py`, this **never raises.** It is on the same free-tier
 quota, so quota exhaustion is an expected outcome; a failure returns *no* paths
 plus a structured `degraded_reason` (deferred item B via `ai/degradation.py`),
 never an exception that would break the graph endpoint. It shares the one global
-rate limiter (`ai/gemini.py`) with the categorizer — the 10 RPM budget is
-per-key, across both callers.
+rate limiter (`ai/gemini.py`) with every other caller — the 5 RPM budget
+(measured; see `ai/gemini.py`) is per-key, across all four.
 """
 
 from __future__ import annotations

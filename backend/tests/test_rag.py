@@ -31,7 +31,7 @@ class _FakeModel:
 
 @pytest.fixture
 def no_rate_limit(monkeypatch):
-    """Skip the 6.5s spacer — tests must not actually sleep — and set a key."""
+    """Skip the rate limiter's spacer — tests must not sleep — and set a key."""
     monkeypatch.setattr(rag, "_rate_limiter", type("N", (), {"wait": lambda s: None})())
     monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
 

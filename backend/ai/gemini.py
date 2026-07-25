@@ -1,12 +1,13 @@
 """Shared Gemini plumbing for every module that calls the model.
 
-Two callers exist today — `ai/categorizer.py` (Module 2) and `ai/career_path.py`
-(Module 3 Layer C) — and the free tier's limits are **global**, not per-caller:
-10 RPM / 1500 RPD across the whole key. So the rate limiter lives here, as one
-instance both callers share, rather than one limiter each (which would let two
-callers issue ~2x the intended rate). API-key configuration and log redaction
-are shared for the same reason: there is exactly one right way to do each, and
-duplicating them invites drift.
+Four callers exist today — `ai/categorizer.py` (Module 2), `ai/career_path.py`
+(Module 3 Layer C), `ai/rag.py` (Phase 7), and `ai/vision.py` (OCR fallback) —
+and the free tier's limits are **global**, not per-caller: **5 RPM** (measured;
+see the constant below) across the whole key. So the rate limiter lives here, as
+one instance every caller shares, rather than one limiter each (which would let
+four callers issue ~4x the intended rate). API-key configuration and log
+redaction are shared for the same reason: there is exactly one right way to do
+each, and duplicating them invites drift.
 
 Each caller still builds its *own* `GenerativeModel` (different generation
 configs — the categorizer wants determinism, inference wants a little latitude),
@@ -48,9 +49,29 @@ class RateLimiter:
             self._last_call = time.monotonic()
 
 
-# 10 RPM free tier -> 6s spacing, plus headroom for clock skew. ONE instance:
-# the budget is per-key, so every Gemini caller must queue through the same gate.
-rate_limiter = RateLimiter(min_interval_seconds=6.5)
+# 5 RPM -> 12s spacing, plus headroom for clock skew. ONE instance: the budget is
+# per-key, so every Gemini caller must queue through the same gate.
+#
+# **5, not the 10 this project assumed until 2026-07-25.** The API said so itself,
+# in the 429 that Phase 9's Vision work provoked:
+#
+#     Quota exceeded for metric:
+#     generativelanguage.googleapis.com/generate_content_free_tier_requests,
+#     limit: 5, model: gemini-3-flash
+#     quota_id: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"
+#     retry_delay { seconds: 14 }
+#
+# 6.5s spacing is ~9 RPM — nearly double the real ceiling, so any two callers in
+# quick succession were already gambling; the second Gemini call per scanned
+# upload just made the loss reliable. The docs no longer publish a per-model
+# free-tier RPM (they defer to AI Studio), so the enforced quota in a live 429 is
+# the best evidence available — and better than a doc table, being this key's
+# actual limit. Verify with `pytest -m live` after changing it.
+#
+# The cost is real: ~13s per call, so a scanned upload (Vision + categorization)
+# takes ~26s. Correct beats fast here — the alternative is a document that lands
+# with no text. plan.md §11's cache/batch/queue mitigations remain unbuilt.
+rate_limiter = RateLimiter(min_interval_seconds=13.0)
 
 
 def is_configured() -> bool:
