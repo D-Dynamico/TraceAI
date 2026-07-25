@@ -72,6 +72,20 @@ export async function recategorize(id) {
   return handle(res);
 }
 
+// Manually override a document's category (plan.md § Risk Mitigation). PATCH,
+// because it updates one field of the document — it does not re-run Gemini
+// (that is recategorize) and does not touch the original or the extracted text.
+// The server accepts only the six taxonomy categories and marks the result
+// `category_source: "manual"`.
+export async function setCategory(id, category) {
+  const res = await fetch(`/api/documents/${id}/category`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category }),
+  });
+  return handle(res);
+}
+
 // Hard-delete a document from every store (SQLite, the vector index, and the
 // original file + sidecar for an uploaded file). Scoped to the user server-side.
 export async function deleteDocument(id) {

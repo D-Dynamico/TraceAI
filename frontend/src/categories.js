@@ -51,6 +51,15 @@ export function categoryColor(category) {
   return CATEGORY_COLORS[category] || NEUTRAL;
 }
 
+// The six-category taxonomy (plan.md §4 Module 2) in palette order — what a
+// user may pick when overriding the AI's choice. UNCATEGORIZED is deliberately
+// absent: it is the categorizer's "couldn't tell" fallback, not a category
+// anyone means to file something under. The backend enforces the same set, so a
+// picker built from this list can never offer something a PATCH would reject.
+export const CATEGORY_CHOICES = Object.keys(CATEGORY_COLORS).filter(
+  (c) => c !== UNCATEGORIZED,
+);
+
 // Career Path (knowledge graph, plan.md §6 View 3) is a node *type*, not a
 // category, and it deliberately does NOT get a 7th categorical hue. The palette
 // validator was run with the six category hues plus every plausible candidate
