@@ -393,9 +393,19 @@ def get_document(doc_id: str) -> dict[str, Any] | None:
 def list_documents(
     user_id: str = "demo",
     category: str | None = None,
+    document_type: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    """List documents newest-first, optionally filtered by category.
+    """List documents newest-first, optionally filtered by category and/or type.
+
+    Given **both**, a document matching *either* is returned. That is deliberate
+    and is the fix for a real miss: search maps a typed word to a category, but
+    the category is the model's judgment while `document_type` is what the
+    document plainly is — Gemini filed a résumé under *Skills*, so a filter on
+    *Academics* alone hid it from "show my resume". A word that names a type
+    must find documents of that type wherever the model filed them. Either
+    argument alone still filters on exactly that column, so
+    `GET /api/documents?category=` stays an exact category filter.
 
     `raw_text` is omitted — listings can hold many documents and the full text
     is large. Use get_document() when the text is actually needed.
@@ -408,9 +418,15 @@ def list_documents(
         WHERE user_id = ?
     """
     params: list[Any] = [user_id]
-    if category:
+    if category and document_type:
+        sql += " AND (category = ? OR document_type = ?)"
+        params += [category, document_type]
+    elif category:
         sql += " AND category = ?"
         params.append(category)
+    elif document_type:
+        sql += " AND document_type = ?"
+        params.append(document_type)
     sql += " ORDER BY upload_date DESC LIMIT ?"
     params.append(limit)
 

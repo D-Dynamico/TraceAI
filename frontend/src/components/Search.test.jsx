@@ -43,6 +43,38 @@ async function searchFor(text) {
   await userEvent.click(screen.getByRole("button", { name: /^search$/i }));
 }
 
+describe("Search fallback notice", () => {
+  // The backend serves an empty structured filter with semantic search instead
+  // (`fell_back`). The rows are then *related*, not the exact set the query
+  // named, and the UI has to say which it is showing.
+  it("says the results are the closest matches, not an exact match", async () => {
+    vi.spyOn(client, "search").mockResolvedValue(
+      filterResponse({
+        mode: "semantic",
+        category: null,
+        fell_back: true,
+        query: "show my internships",
+      }),
+    );
+
+    render(<Search />);
+    await searchFor("show my internships");
+
+    expect(await screen.findByText(/no exact match/i)).toBeInTheDocument();
+    expect(screen.getByText(/closest documents instead/i)).toBeInTheDocument();
+  });
+
+  it("stays quiet when the filter matched exactly", async () => {
+    vi.spyOn(client, "search").mockResolvedValue(filterResponse());
+
+    render(<Search />);
+    await searchFor("show all my certificates");
+
+    expect(await screen.findByText("Python Cert")).toBeInTheDocument();
+    expect(screen.queryByText(/no exact match/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("Search routing", () => {
   it("filter query shows a grid and never asks for an answer", async () => {
     const search = vi.spyOn(client, "search").mockResolvedValue(filterResponse());

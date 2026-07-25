@@ -140,6 +140,18 @@ export default function Search() {
             </button>
           )}
 
+          {/* A filter that matched nothing was served by semantic search
+              instead (backend `fell_back`). Saying so matters: these rows are
+              related, not the exact set the query named, and silently swapping
+              one for the other is how a user concludes the app misfiled
+              something it did not. */}
+          {response.fell_back && (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              No exact match for “{response.query}” — showing the closest
+              documents instead.
+            </p>
+          )}
+
           <p className="text-xs text-slate-500">
             {response.count === 0
               ? "No matches"

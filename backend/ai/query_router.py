@@ -21,6 +21,18 @@ drift from what the model actually stores. The only hand-maintained piece is
 `_ALIASES` — the document-type words a user types that are not spelled like their
 category ("certificate" -> Certifications, "resume" -> Academics) — kept explicit
 and small on purpose.
+
+**A keyword resolves to a category *and*, where the word names one, a
+`document_type`.** Mapping a word to a category alone was a real bug: "resume"
+predicted *Academics*, Gemini filed an actual resume under *Skills* (a resume is
+mostly skills), and the SQL filter then excluded the very document the user asked
+for. Two independent answers to "what is a resume" — the table's and the model's
+— and the filter trusted only the table's. The database already stores the other
+half: that document's `document_type` is literally `resume`. So a keyword carries
+both, the filter matches *either*, and a category the model chose differently can
+no longer hide a document from the word that names its type. The same fault hid
+the seed's "Hackathon Winner Certificate" (`document_type=certificate`, category
+*Achievements*) from "show all my certificates" — a plan.md §16 must-work query.
 """
 
 from __future__ import annotations
@@ -30,40 +42,50 @@ from dataclasses import dataclass
 
 from models.document import CATEGORIES
 
-# Document-type words people actually type that differ from their category name.
-# These are the known category/type mismatches; everything else is derived below.
-_ALIASES = {
-    "certificate": "Certifications",
-    "certificates": "Certifications",
-    "certification": "Certifications",
-    "cert": "Certifications",
-    "certs": "Certifications",
-    "resume": "Academics",
-    "cv": "Academics",
-    "marksheet": "Academics",
-    "transcript": "Academics",
-    "grade": "Academics",
-    "grades": "Academics",
-    "intern": "Internships",
-    "award": "Achievements",
-    "awards": "Achievements",
-    "hackathon": "Achievements",
+# Words people actually type, mapped to (category, document_type). The
+# document_type is None when the word names only a category ("marksheet" is
+# Academics, but there is no marksheet document_type — the taxonomy in
+# models.document.DOCUMENT_TYPES is closed and small).
+#
+# Category-spelled words are derived below; the ones repeated here
+# ("certifications", "internships") are repeated *because* they also name a
+# document type and would otherwise resolve to the category half only.
+_ALIASES: dict[str, tuple[str, str | None]] = {
+    "certificate": ("Certifications", "certificate"),
+    "certificates": ("Certifications", "certificate"),
+    "certification": ("Certifications", "certificate"),
+    "certifications": ("Certifications", "certificate"),
+    "cert": ("Certifications", "certificate"),
+    "certs": ("Certifications", "certificate"),
+    "resume": ("Academics", "resume"),
+    "resumes": ("Academics", "resume"),
+    "cv": ("Academics", "resume"),
+    "marksheet": ("Academics", None),
+    "transcript": ("Academics", None),
+    "grade": ("Academics", None),
+    "grades": ("Academics", None),
+    "intern": ("Internships", "internship_letter"),
+    "internship": ("Internships", "internship_letter"),
+    "internships": ("Internships", "internship_letter"),
+    "award": ("Achievements", None),
+    "awards": ("Achievements", None),
+    "hackathon": ("Achievements", None),
 }
 
 
-def _canonical_keywords() -> dict[str, str]:
-    """Map every recognised keyword to its canonical category.
+def _canonical_keywords() -> dict[str, tuple[str, str | None]]:
+    """Map every recognised keyword to its (category, document_type) pair.
 
     Built from CATEGORIES (so "Projects" matches "project"/"projects") plus the
-    explicit aliases. Rebuilt at import; if CATEGORIES changes, the canonical
-    half updates automatically.
+    explicit aliases, which are applied last and therefore win. Rebuilt at
+    import; if CATEGORIES changes, the canonical half updates automatically.
     """
-    mapping: dict[str, str] = {}
+    mapping: dict[str, tuple[str, str | None]] = {}
     for category in CATEGORIES:
         lowered = category.lower()
-        mapping[lowered] = category  # "certifications"
+        mapping[lowered] = (category, None)  # "certifications"
         if lowered.endswith("s"):
-            mapping[lowered[:-1]] = category  # "certification"
+            mapping[lowered[:-1]] = (category, None)  # "certification"
     mapping.update(_ALIASES)
     return mapping
 
@@ -89,12 +111,16 @@ class Route:
     """The decision: how to serve a query.
 
     `mode` is "filter" (structured SQL) or "semantic" (vector search). For a
-    filter, `category` names the SQL filter (None means "all documents") and
-    `sort` is "latest" when the query asked for the most recent.
+    filter, `category` and `document_type` name what to match — a document
+    satisfying *either* is a hit, because the word the user typed can name a
+    category, a document type, or both, and the model's choice of category is
+    not authoritative over what the document plainly is. Both None means "all
+    documents". `sort` is "latest" when the query asked for the most recent.
     """
 
     mode: str
     category: str | None = None
+    document_type: str | None = None
     sort: str | None = None
 
 
@@ -128,15 +154,17 @@ def route(query: str) -> Route:
     if _looks_like_question(text, words):
         return Route(mode="semantic")
 
-    category = next((_KEYWORDS[w] for w in words if w in _KEYWORDS), None)
+    match = next((_KEYWORDS[w] for w in words if w in _KEYWORDS), None)
+    category, document_type = match if match is not None else (None, None)
     wants_latest = any(w in _LATEST for w in words)
 
     # A category word is a confident filter signal. "latest" alone (no category)
     # is still a filter — "show my latest documents" wants the newest rows.
-    if category is not None or wants_latest:
+    if match is not None or wants_latest:
         return Route(
             mode="filter",
             category=category,
+            document_type=document_type,
             sort="latest" if wants_latest else None,
         )
 

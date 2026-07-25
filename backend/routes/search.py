@@ -71,6 +71,11 @@ class SearchResponse(BaseModel):
     # then fetch a synthesized answer from /api/answer over these results. A
     # filter query is never a question, so this is False for the grid modes.
     answerable: bool = False
+    # True when a structured filter matched nothing and semantic search served
+    # the query instead. The results are then *related*, not exact, and the UI
+    # says so — swapping the meaning of a result set silently is worse than the
+    # empty page it replaces.
+    fell_back: bool = False
 
 
 def _to_result(doc: dict[str, Any], score: float | None = None) -> SearchResult:
@@ -96,6 +101,7 @@ async def _filter_search(route: query_router.Route) -> list[SearchResult]:
         database.list_documents,
         user_id=DEFAULT_USER,
         category=route.category,
+        document_type=route.document_type,
         limit=FILTER_LIMIT,
     )
     if route.sort == "latest":
@@ -138,18 +144,34 @@ async def search(payload: SearchRequest) -> SearchResponse:
     k = max(1, min(payload.k, MAX_K))
     decision = query_router.route(query)
 
+    mode = decision.mode
+    category = decision.category
+    fell_back = False
+
     if decision.mode == "filter":
         results = await _filter_search(decision)
+        # A filter that matched nothing falls through to semantic search rather
+        # than reporting an empty library. The router's word→category guess is
+        # the weakest link in the chain (it predicts what the model *should*
+        # have decided), and when it guesses wrong the documents are still
+        # there and still embedded — an empty page tells the user the opposite.
+        # Reported honestly: the response says semantic + fell_back, because
+        # these hits are related rather than exact.
+        if not results:
+            results = await _semantic_search(query, k)
+            if results:
+                mode, category, fell_back = "semantic", None, True
     else:
         results = await _semantic_search(query, k)
 
     return SearchResponse(
         query=query,
-        mode=decision.mode,
-        category=decision.category,
+        mode=mode,
+        category=category,
         count=len(results),
         results=results,
         answerable=query_router.is_question(query),
+        fell_back=fell_back,
     )
 
 
