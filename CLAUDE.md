@@ -7,8 +7,15 @@ only what those two do not: conventions and environment traps.
 ## Responses
 
 Be extremely concise. Sacrifice grammar for concision and clarity. Applies to
-chat replies, not to code comments or commit messages — those keep their
-reasoning.
+chat replies and **commit messages**; code comments are the exception and keep
+their full reasoning.
+
+**Commit messages: a subject line plus at most a short paragraph naming the why
+or the non-obvious constraint.** Not three paragraphs — long bodies bury the
+point rather than preserve it. Detail that genuinely needs to live somewhere
+goes in a code comment, `plan.md`, or `README.md`, all of which this repo
+already uses for exactly that. Add a second paragraph only for a real trap a
+future reader would otherwise hit.
 
 ## Commands
 
