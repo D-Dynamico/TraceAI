@@ -179,8 +179,13 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # Extract text. The original is only ever read from here on — never written.
+    # Off the event loop: extraction is CPU-bound for a text-layer document, but a
+    # scanned one now falls through to Gemini Vision, which blocks on the shared
+    # rate limiter (whose lock is held across a sleep, deliberately). Left inline,
+    # one scanned upload would stall every other request — health checks and
+    # search included — for the limiter's interval plus the round trip.
     try:
-        result = file_parser.extract_text(stored_path)
+        result = await run_in_threadpool(file_parser.extract_text, stored_path)
     except file_parser.UnsupportedFileError as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     except Exception as exc:  # parser blew up on a corrupt file

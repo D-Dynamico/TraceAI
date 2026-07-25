@@ -7,9 +7,10 @@ retry for a quota exhaustion (which clears itself) but not for a missing API key
 instead of pattern-matching a sentence that exists to be read, not parsed.
 
 This was deferred until a second Gemini caller existed to design against (see
-`docs/deferred-ui-and-degradation.md`). There are now two — `ai/categorizer.py`
-and `ai/career_path.py` — and both degrade through this one table, so the
-mapping from cause to "does retrying help?" is defined in a single place.
+`docs/deferred-ui-and-degradation.md`). There are now four — `ai/categorizer.py`,
+`ai/career_path.py`, `ai/rag.py`, and `ai/vision.py` — and all four degrade
+through this one table, so the mapping from cause to "does retrying help?" is
+defined in a single place.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ DegradedReason = Literal[
     "no_api_key",  # no key configured — will not fix itself
     "unreadable_response",  # a response came back but was not usable JSON
     "no_text",  # nothing to send — not the model's fault, not retryable
+    "vision_disabled",  # Vision OCR turned off by config — a choice, not a fault
+    "too_large",  # the file exceeds the inline request cap — will not fix itself
 ]
 
 
@@ -42,6 +45,8 @@ _TABLE: dict[str, tuple[bool, str]] = {
     "no_api_key": (False, "no API key is configured"),
     "unreadable_response": (True, "the AI response could not be read"),
     "no_text": (False, "the document had no extractable text"),
+    "vision_disabled": (False, "AI image reading is turned off"),
+    "too_large": (False, "the file is too large to send to the AI"),
 }
 
 

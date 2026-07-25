@@ -11,11 +11,12 @@ stubbed suite would keep passing through all three.
 
 from __future__ import annotations
 
+import io
 import uuid
 
 import pytest
 
-from ai import career_path, categorizer, rag
+from ai import career_path, categorizer, rag, vision
 from conftest import upload
 from db import database
 
@@ -110,6 +111,74 @@ def test_career_path_inference_against_the_live_api(client):
     assert all(doc_id in known for doc_id in path.evidence_doc_ids), (
         "evidence must map to real documents, not hallucinated indices"
     )
+
+
+CERTIFICATE_LINES = [
+    "CERTIFICATE OF COMPLETION",
+    "Awarded to Dayanand Kori",
+    "Deep Learning Specialization",
+    "Issued by Coursera",
+    "March 2024",
+]
+
+
+def _rendered_certificate() -> bytes:
+    """Render the lines above into a PNG — a stand-in for a scanned certificate.
+
+    Generated rather than committed: a fixture image would be a binary blob in
+    the repo whose expected transcript nobody could check by reading the diff.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.new("RGB", (960, 420), "white")
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default(size=34)
+    for i, line in enumerate(CERTIFICATE_LINES):
+        draw.text((50, 40 + i * 68), line, fill="black", font=font)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_vision_ocr_against_the_live_api(tmp_path):
+    """The only test that proves the Vision rung actually works.
+
+    The offline suite stubs `vision._generate`, so nothing else would catch the
+    inline-blob part format changing, the configured model losing vision
+    support, or the request exceeding a limit. Run it after touching `ai/`.
+    """
+    path = tmp_path / "certificate_scan.png"
+    path.write_bytes(_rendered_certificate())
+
+    result = vision.extract_text(path)
+
+    assert result.degraded is None, result.degraded
+    assert result.text.strip(), "live Vision returned no transcript"
+    lowered = result.text.lower()
+    assert "coursera" in lowered, result.text
+    assert "2024" in result.text, result.text
+    # A transcript, not a description: the model was told to transcribe, and a
+    # description of a certificate would be indexed as if it had been read.
+    assert "certificate" in lowered, result.text
+
+
+def test_a_scanned_upload_is_searchable_end_to_end(client, tmp_path):
+    """Scan -> live Vision -> live categorization -> SQLite, with real text.
+
+    The failure this guards is silent: with no Vision rung and no Tesseract, the
+    upload still returns 200 and stores `raw_text = ""`.
+    """
+    resp = upload(client, "certificate_scan.png", _rendered_certificate(), "image/png")
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["method"] == "vision", body["method"]
+    assert body["char_count"] > 0
+
+    row = database.get_document(body["id"])
+    assert "coursera" in row["raw_text"].lower()
+    # And the text was good enough for the categorizer to work from.
+    assert row["confidence"] > 0.0
 
 
 def test_rag_synthesis_against_the_live_api():

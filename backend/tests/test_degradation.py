@@ -14,11 +14,16 @@ def test_retryable_split_matches_whether_the_failure_clears_itself():
     assert degradation.from_reason("unreachable").retryable is True
     assert degradation.from_reason("no_api_key").retryable is False
     assert degradation.from_reason("no_text").retryable is False
+    # Vision's two local-policy codes: a config choice and a hard size ceiling.
+    # Neither changes by trying again, so neither may offer a retry.
+    assert degradation.from_reason("vision_disabled").retryable is False
+    assert degradation.from_reason("too_large").retryable is False
 
 
 def test_every_reason_carries_prose():
     for reason in ("quota", "timeout", "unreachable", "no_api_key",
-                   "unreadable_response", "no_text"):
+                   "unreadable_response", "no_text", "vision_disabled",
+                   "too_large"):
         deg = degradation.from_reason(reason)
         assert deg.reason == reason
         assert deg.message

@@ -64,6 +64,13 @@ These have each cost real time. Read before running anything.
 - `ai/categorizer.py::categorize()` **must never raise.** Every failure path
   degrades to a filename-based guess with `confidence = 0.0`. An upload is never
   lost to a transient API problem.
+- `ai/vision.py::extract_text()` **must never raise** either, for the same
+  reason — extraction is upstream of everything, so a Gemini hiccup there would
+  lose the upload outright rather than degrade it.
+- **OCR is local-first and must stay that way.** `ocr_handler` tries Tesseract
+  before Gemini Vision because local OCR is free and cannot exhaust a quota;
+  the paid rung runs only when the free one produced nothing. Reordering these
+  spends quota on documents that never needed it — mutation-tested.
 - Anything that logs an exception from the Gemini SDK must pass it through
   `_redact()` — on the REST transport those messages can carry `?key=<api key>`.
 - Gemini free tier is 10 RPM / 1500 RPD. Calls are serialized by a rate limiter
@@ -100,6 +107,13 @@ These have each cost real time. Read before running anything.
   silently get the stub and pass while testing nothing. Mark such tests
   `@pytest.mark.nostub`. This has already produced one false-passing security
   test.
+- `conftest.py` has a **second autouse AI stub: `vision._generate`**, the Gemini
+  Vision call that extraction now reaches when local OCR yields nothing. Without
+  it any test uploading an image or scanned PDF spends real quota. It replaces
+  only that one function, so `extract_text`'s guards still execute, and it
+  defaults to an **empty** transcript — failing closed, so a test that needs
+  Vision to succeed has to patch `_generate` itself and cannot pass on text a
+  stub invented.
 - The same stub also returns a fixed `date="2024-03"` for **every** document, so
   any test about a *missing* date passes against the stub's date and never
   exercises the fallback. Four tests in `test_dates.py` did exactly this before

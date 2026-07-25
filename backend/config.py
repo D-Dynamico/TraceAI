@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # If a PDF yields fewer than this many characters of real text,
     # treat it as scanned and fall back to OCR.
     ocr_char_threshold: int = 100
+    # Try Gemini Vision when local OCR (Tesseract/Poppler) yields nothing.
+    # On by default: without it a scanned document is stored with no text at
+    # all on any host lacking those binaries, which includes Render's free
+    # tier. Off is for saving free-tier quota on a machine where Tesseract
+    # works — it costs one extra Gemini call per scanned upload.
+    vision_ocr_enabled: bool = True
 
     def ensure_dirs(self) -> None:
         """Create storage directories if they don't exist yet."""

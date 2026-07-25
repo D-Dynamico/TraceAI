@@ -6,7 +6,7 @@ appropriate parser:
   - DOCX  -> python-docx
   - PPTX  -> python-pptx
   - TXT/MD-> raw read
-  - Images-> OCR (pytesseract)
+  - Images-> OCR (local Tesseract, then Gemini Vision — see ocr_handler)
 
 Returns an ExtractionResult with the text and metadata about how it was
 obtained, so downstream modules (and the UI) can flag low-confidence extractions.
@@ -37,8 +37,14 @@ SUPPORTED_EXTS = PDF_EXTS | DOCX_EXTS | PPTX_EXTS | TEXT_EXTS | IMAGE_EXTS
 class ExtractionResult:
     text: str
     file_type: str          # "pdf" | "docx" | "pptx" | "text" | "image"
-    method: str             # "native" | "ocr" | "native+ocr"
+    # "native" | "ocr" | "vision" | "native+ocr" | "native+vision".
+    # "vision" means Gemini read the pixels because local OCR yielded nothing;
+    # it is surfaced on the API so a reviewer can see *which* rung produced the
+    # text rather than being told only that some OCR ran.
+    method: str
     char_count: int = 0
+    # True whenever text came from reading pixels rather than a text layer —
+    # local OCR and Vision alike, since both are "this was not machine text".
     used_ocr: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -83,13 +89,13 @@ def _extract_pdf(path: Path) -> ExtractionResult:
 
     # If the PDF has little/no extractable text, it's likely scanned -> OCR.
     if len(native_text) < settings.ocr_char_threshold:
-        ocr_text = ocr_handler.ocr_pdf(path)
-        if ocr_text:
-            method = "native+ocr" if native_text else "ocr"
-            combined = (native_text + "\n\n" + ocr_text).strip() if native_text else ocr_text
+        ocr = ocr_handler.ocr_pdf(path)
+        if ocr.text:
+            method = f"native+{ocr.method}" if native_text else ocr.method
+            combined = (native_text + "\n\n" + ocr.text).strip() if native_text else ocr.text
             return ExtractionResult(combined, "pdf", method, used_ocr=True, warnings=warnings)
         if not native_text:
-            warnings.append("No text extracted and OCR unavailable/empty.")
+            warnings.append(_no_text_warning(ocr))
         return ExtractionResult(native_text, "pdf", "native", used_ocr=False, warnings=warnings)
 
     return ExtractionResult(native_text, "pdf", "native", used_ocr=False, warnings=warnings)
@@ -128,12 +134,35 @@ def _extract_text(path: Path) -> ExtractionResult:
     return ExtractionResult(text, "text", "native")
 
 
+def _no_text_warning(result: ocr_handler.OcrResult) -> str:
+    """Name which rung failed and why, not just that the text is missing.
+
+    The failure this replaces read "OCR produced no text (Tesseract unavailable
+    or blank image)" — one sentence covering two unrelated causes with opposite
+    fixes. A missing binary is the operator's problem; a quota wall clears on its
+    own; a blank scan is nobody's. Each now says so.
+    """
+    parts: list[str] = ["No text could be extracted."]
+    parts.append(
+        "Local OCR (Tesseract) is not installed."
+        if not result.local_available
+        else "Local OCR found no text."
+    )
+    if result.degraded is not None:
+        parts.append(f"Gemini Vision: {result.degraded.message}.")
+    return " ".join(parts)
+
+
 def _extract_image(path: Path) -> ExtractionResult:
     warnings: list[str] = []
-    text = ocr_handler.ocr_image(path)
-    if not text:
-        warnings.append("OCR produced no text (Tesseract unavailable or blank image).")
-    return ExtractionResult(text, "image", "ocr", used_ocr=True, warnings=warnings)
+    ocr = ocr_handler.ocr_image(path)
+    if not ocr.text:
+        warnings.append(_no_text_warning(ocr))
+    # `method` reports the rung that won; on total failure keep "ocr" so the
+    # field still says how the file was *approached*.
+    return ExtractionResult(
+        ocr.text, "image", ocr.method or "ocr", used_ocr=True, warnings=warnings
+    )
 
 
 _EXTRACTORS = {

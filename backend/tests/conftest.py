@@ -22,7 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import storage
-from ai import categorizer, embeddings
+from ai import categorizer, embeddings, vision
 from config import settings
 from db import database
 from models.document import Categorization
@@ -102,6 +102,35 @@ def stub_categorizer(request, monkeypatch, stub_result):
 
 
 @pytest.fixture(autouse=True)
+def stub_vision(request, monkeypatch):
+    """Keep the Gemini Vision rung off the network.
+
+    Extraction gained a Gemini call (`ai/vision.py`, reached from
+    `ocr_handler` when local OCR yields nothing), so **any** test that uploads an
+    image or a scanned PDF would otherwise spend real free-tier quota. No test
+    did when the rung was added — which is exactly why this fixture has to exist
+    before one does.
+
+    Unlike `stub_categorizer`, this replaces only `_generate`, the module's sole
+    network touch. Everything worth testing in `extract_text` — the config gate,
+    the key check, the inline size cap, the sentinel, the exception→reason
+    mapping — is code *around* that call and stays live. Stubbing
+    `extract_text` wholesale would skip all of it.
+
+    The default is an empty transcript, i.e. "the model saw no text": it leaves
+    every pre-existing expectation about images intact, and it fails *closed* —
+    a test that needs Vision to succeed has to say so, so no test can pass on
+    text that a stub invented. Those tests patch `vision._generate` themselves.
+    """
+    if request.node.get_closest_marker("live"):
+        return
+
+    # Drop any client cached against a previous test's key/config.
+    monkeypatch.setattr(vision, "_model", None)
+    monkeypatch.setattr(vision, "_generate", lambda data, mime_type: "")
+
+
+@pytest.fixture(autouse=True)
 def stub_embeddings(request, monkeypatch):
     """Replace the sentence-transformer with a deterministic fake.
 
@@ -162,6 +191,31 @@ def make_pptx(title: str = "ML Pipeline Project") -> bytes:
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
+
+
+def make_image(fmt: str = "PNG", size: tuple[int, int] = (48, 24)) -> bytes:
+    """A tiny blank image. Stands in for a scan: what matters to the OCR ladder
+    is that no text layer exists, not what the pixels show."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, "white").save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def make_textless_pdf() -> bytes:
+    """A valid PDF with a page but no text layer — the scanned-PDF shape.
+
+    PyMuPDF is already a dependency, and a real scan is the same thing to the
+    parser: `page.get_text()` returns nothing, so extraction drops to OCR.
+    """
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page()
+    data = doc.tobytes()
+    doc.close()
+    return data
 
 
 def upload(client: TestClient, name: str, data: bytes, mime: str = "text/plain"):

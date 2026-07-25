@@ -1,18 +1,52 @@
-"""OCR fallback for scanned PDFs and images.
+"""OCR fallback for scanned PDFs and images — a two-rung ladder.
 
-Uses pytesseract (Tesseract OCR engine) with pdf2image for PDF rasterization.
-Both Tesseract and Poppler are external binaries that must be installed on the
-host. If they're missing we degrade gracefully: OCR returns an empty string and
-logs a warning rather than crashing the upload pipeline. In Phase 2+ the Gemini
-Vision API can serve as a stronger fallback when local OCR is unavailable.
+**Rung 1, local:** pytesseract (Tesseract) with pdf2image (Poppler) to
+rasterize PDF pages. Free, offline, no quota.
+
+**Rung 2, Gemini Vision:** `ai/vision.py`, tried only when rung 1 produced
+nothing. plan.md promises this fallback in §2, §4 Module 1, and § Risk
+Mitigation; it did not exist until now.
+
+Rung 2 is not a nicety. Tesseract and Poppler are **external binaries**, absent
+from this dev machine and not installable on Render's free native-Python runtime
+(Phase 10) — so on both, rung 1 always yields nothing. Gemini needs no binaries
+and rasterizes PDF pages itself, which is why one call replaces both missing
+dependencies rather than merely improving accuracy on scans.
+
+Ordering is local-first on purpose: Tesseract costs nothing and cannot exhaust a
+quota, so the rung that spends quota only runs once the free one has failed.
+
+Nothing here raises. A failure returns empty text plus the structured reason it
+is empty (`ai/degradation.py`), because the caller's job is to turn that into a
+warning the user can act on — the previous version returned a bare `""`, which
+left "Tesseract is missing" indistinguishable from "this page is blank".
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import NamedTuple
+
+from ai import degradation
+from ai import vision
 
 logger = logging.getLogger(__name__)
+
+
+class OcrResult(NamedTuple):
+    """Text plus how it was obtained, or why it is empty.
+
+    `local_available` records whether Tesseract was reachable at all. It exists
+    because a missing binary and a blank page produce the same empty string, and
+    telling them apart is the difference between "install Tesseract" and "this
+    scan is unreadable" — the diagnosis that used to be invisible.
+    """
+
+    text: str
+    method: str = ""  # "ocr" (local) | "vision" | "" when nothing worked
+    degraded: degradation.Degradation | None = None
+    local_available: bool = False
 
 
 def _tesseract_available() -> bool:
@@ -26,10 +60,8 @@ def _tesseract_available() -> bool:
         return False
 
 
-def ocr_image(path: Path) -> str:
-    """Run OCR on a single image file. Returns extracted text (may be empty)."""
-    if not _tesseract_available():
-        return ""
+def _tesseract_image(path: Path) -> str:
+    """Local OCR on a single image. Empty string on any failure."""
     try:
         import pytesseract
         from PIL import Image
@@ -37,17 +69,12 @@ def ocr_image(path: Path) -> str:
         with Image.open(path) as img:
             return pytesseract.image_to_string(img).strip()
     except Exception as exc:
-        logger.warning("OCR failed for image %s: %s", path, exc)
+        logger.warning("Local OCR failed for image %s: %s", path, exc)
         return ""
 
 
-def ocr_pdf(path: Path, dpi: int = 200) -> str:
-    """Rasterize each PDF page and OCR it. Returns concatenated page text.
-
-    Requires Poppler (for pdf2image). Returns empty string if unavailable.
-    """
-    if not _tesseract_available():
-        return ""
+def _tesseract_pdf(path: Path, dpi: int = 200) -> str:
+    """Rasterize each PDF page (Poppler) and OCR it. Empty string on failure."""
     try:
         import pytesseract
         from pdf2image import convert_from_path
@@ -64,3 +91,34 @@ def ocr_pdf(path: Path, dpi: int = 200) -> str:
         except Exception as exc:
             logger.warning("OCR failed for page %d of %s: %s", i, path, exc)
     return "\n\n".join(t for t in texts if t).strip()
+
+
+def _run_ladder(path: Path, local_text: str, local_available: bool) -> OcrResult:
+    """Shared tail: accept local text if there is any, else try Vision."""
+    if local_text:
+        return OcrResult(local_text, "ocr", None, local_available)
+
+    result = vision.extract_text(path)
+    if result.text:
+        return OcrResult(result.text, "vision", None, local_available)
+
+    return OcrResult("", "", result.degraded, local_available)
+
+
+def ocr_image(path: Path) -> OcrResult:
+    """Extract text from an image: local OCR, then Gemini Vision."""
+    local_available = _tesseract_available()
+    local_text = _tesseract_image(path) if local_available else ""
+    return _run_ladder(path, local_text, local_available)
+
+
+def ocr_pdf(path: Path, dpi: int = 200) -> OcrResult:
+    """Extract text from a scanned PDF: local OCR, then Gemini Vision.
+
+    Vision receives the PDF itself (`application/pdf`), not page images — the
+    API rasterizes pages server-side, so this rung needs neither Poppler nor a
+    local rasterization step.
+    """
+    local_available = _tesseract_available()
+    local_text = _tesseract_pdf(path, dpi=dpi) if local_available else ""
+    return _run_ladder(path, local_text, local_available)
