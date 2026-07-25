@@ -48,7 +48,8 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
   `confidence = 0.0` and a review warning, rather than failing the request.
   Model output is normalized before storage, so a drifted category or a
   confidence returned as `85` instead of `0.85` does not corrupt the database.
-- **Free-tier aware** — calls are serialized to stay within 10 RPM.
+- **Free-tier aware** — calls are serialized to stay within the free tier's
+  **5 RPM** (measured from a live 429; see `ai/gemini.py`).
 
 ### Phase 3 capabilities
 - **URL ingestion that persists.** `POST /api/ingest-url` now runs the same
@@ -153,9 +154,8 @@ validator results and the two candidate orderings that failed.
   retryable card's **Try again** button calls `POST /api/documents/{id}/recategorize`,
   which re-runs categorization over the preserved text and updates the row in
   place (the original file is never touched).
-- **One shared rate limiter.** The 10 RPM free-tier budget is per-key, not
-  per-module, so both Gemini callers queue through a single limiter in
-  `ai/gemini.py`.
+- **One shared rate limiter.** The free-tier budget is per-key, not per-module,
+  so every Gemini caller queues through a single limiter in `ai/gemini.py`.
 - **Isolation.** The graph is scoped to `user_id` at every source, and the scope
   is mutation-tested — breaking the `WHERE user_id` filter leaks a foreign node
   and turns the isolation test red.
@@ -280,9 +280,50 @@ validator results and the two candidate orderings that failed.
   filter that matches nothing is re-run as a semantic search, and the response
   says so (`fell_back`) so the UI can mark the rows as *closest matches* rather
   than passing related results off as the exact set the query named.
+- **Gemini Vision OCR — scans stop arriving empty.** plan.md promises this
+  fallback three times (§2, §4 Module 1, § Risk Mitigation) and it did not exist.
+  Local OCR needs **Tesseract and Poppler**, external binaries that are not on
+  this dev machine and cannot be installed on Render's free native-Python runtime
+  — so on both, a scanned certificate was stored with `raw_text = ""` while the
+  upload reported success: the categorizer fell back to a filename guess, the
+  embedding carried no signal, and the document was unfindable. Silent, and in
+  the one area the project is judged most on (§15, retrieval = 40%).
+  `ai/vision.py` is a fourth Gemini caller under the same three contracts as the
+  others — the one shared rate limiter, redacted logs, and **never raises**.
+  `ocr_handler` is now a two-rung ladder: local OCR first (free, no quota), Gemini
+  Vision only when it yields nothing. A PDF goes to the API **whole**, which
+  rasterizes pages server-side, so one call replaces *both* missing binaries.
+  The model is asked for a verbatim transcript, never a description — a plausible
+  description of a document nobody read would be embedded and cited as if it had
+  been — with an explicit sentinel for "nothing legible", so the model's own prose
+  about failing is never stored as the document's text.
+- **A failed extraction now says which rung failed.** The old warning read
+  "OCR produced no text (Tesseract unavailable or blank image)" — one sentence for
+  two unrelated causes with opposite fixes. A missing binary is the operator's
+  problem, a quota wall clears itself, a blank scan is nobody's; each is now
+  reported distinctly, along with the structured reason and its `retryable` flag.
+- **The free tier is 5 RPM and 20 requests per _day_ — not 10 RPM / 1500 RPD.**
+  Found by this work: the second Gemini call per scanned upload pushed the live
+  suite into 429s that named both real ceilings —
+  `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` → `limit: 5`, and
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier` → **`limit: 20`**, model
+  `gemini-3-flash`. The docs no longer publish per-model free-tier limits (they
+  defer to AI Studio), so an enforced quota in a live 429 is the best evidence
+  available — and better than a doc table, being this key's actual limit.
+  - **RPM is handled:** the shared limiter had been spacing calls 6.5s apart,
+    about 9 RPM and nearly double the real budget, so any two callers in quick
+    succession were already gambling. Now 13s.
+  - **RPD is not, and cannot be by spacing.** 20/day is the binding constraint on
+    the whole project: a full `pytest -m live` run is 8 calls (40% of a day), a
+    scanned upload is 2, and the plan.md §10 demo script's "upload 8-10
+    documents" would spend a day's quota by itself. This is what makes Phase 8's
+    **"Load Demo Profile" — which issues no Gemini call at all** — load-bearing
+    rather than a convenience, and it is why every caller degrades instead of
+    failing. plan.md §11's cache/batch/queue mitigations remain unbuilt.
+  - **Known cost:** a scanned upload makes two calls, so ~26s at 13s spacing.
 - **Frontend test suite.** The React app now has 115 vitest + Testing Library
   tests where it had none (see [Frontend](#frontend)).
-- **Next:** real-document edge-case testing (a scanned image, an awkward PDF, a
+- **Next:** the rest of the real-document edge-case pass (an awkward PDF, a
   dead or private-IP URL, an empty entry, responsive layout).
 
 ### Original Format Preservation
@@ -317,9 +358,12 @@ uvicorn main:app --reload --port 8000
 
 API docs at http://localhost:8000/docs
 
-> **OCR (optional):** scanned-PDF / image extraction needs the external
-> **Tesseract** and **Poppler** binaries on your PATH. Without them, uploads
-> still succeed — OCR just returns empty text with a warning.
+> **OCR (optional):** local OCR of scans and images uses the external
+> **Tesseract** and **Poppler** binaries. They are genuinely optional now —
+> without them extraction falls through to **Gemini Vision**, which needs no
+> local binaries and reads PDF pages directly. Installing them only saves a
+> Gemini call per scanned upload. Set `VISION_OCR_ENABLED=false` to turn the
+> fallback off and rely on local OCR alone.
 
 ### Frontend (Node 18+)
 
@@ -346,6 +390,7 @@ cp .env.example .env
 | `GEMINI_API_KEY` | Phase 2 onward  | From [Google AI Studio](https://aistudio.google.com/apikey) |
 | `GEMINI_MODEL`   | no              | Defaults to `gemini-3-flash-preview`             |
 | `DEBUG`          | no              | `true` enables verbose logging                   |
+| `VISION_OCR_ENABLED` | no          | Default `true`. Read scans with Gemini Vision when local OCR finds nothing. Off = local OCR only, so no text at all without Tesseract |
 
 `.env` is gitignored — never commit it. For deployment (Phase 10), set these as
 environment variables in the host dashboard instead of shipping the file. If a key
@@ -410,9 +455,9 @@ API quota.
 
 ```bash
 cd backend
-pytest              # 350 tests, no network, ~2 min
+pytest              # 374 tests, no network, ~1.5 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
-pytest -m live      # 5 more that call the real Gemini API (needs a key, ~1 min)
+pytest -m live      # 7 more that call the real Gemini API (needs a key, ~2 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
 ```
 
@@ -443,8 +488,9 @@ actually ranks first.
 | `test_seed.py`           | Demo seed — endpoint, idempotency, non-destructive re-seed, the Python skill hub |
 | `test_delete.py`         | Document deletion across SQLite, vectors, and the file/sidecar; **user-scoped isolation** |
 | `test_category_override.py` | The manual override — the taxonomy guard, relabel-only (original/text/entities untouched), the graph re-forming on read, survival of a re-categorization, **user-scoped isolation** |
+| `test_vision.py`         | Gemini Vision OCR across all four layers — the call's guards (config gate, key, inline size cap, mime conversion, the no-text sentinel, never-raises, key redaction), the local-first ladder, the warning that names the failing rung, and a scanned upload landing searchable |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
-| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference |
+| `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference, and **real Vision OCR** — the only test that proves the inline-blob format and that the configured model still reads images |
 
 `live` tests are deselected by default because they cost free-tier quota and
 need network. They are the only tests that catch a retired model id, a changed
@@ -478,6 +524,25 @@ Phase 4 added one assertion to that set: the vector store's `user_id` filter.
 Dropping `where={"user_id": ...}` in `embeddings.query` makes another user's
 document leak into search results and turns `test_query_is_filtered_by_user_id`
 red — verified by mutation before the code was committed.
+
+The Vision OCR work was mutation-validated the same way — all ten of its guards.
+Removing the config gate, the key check, the inline size cap, the PNG conversion
+for a mime the API rejects, the no-text sentinel, the never-raises `except`, the
+log redaction, the local-before-Gemini ordering, or either half of the
+which-rung-failed warning each turns exactly one test in `test_vision.py` red.
+
+Two traps that pass worth recording, since neither shows up in a green run:
+
+- A stub that **raises** "this must not be called" proves nothing here.
+  `extract_text` catches every exception from `_generate` by design, so the
+  assertion would be swallowed into a degraded result and the test would pass
+  whether the call happened or not. The tests use a **recorder** and assert the
+  call list is empty.
+- The mutation harness patches source as **bytes**, and this repo mixes line
+  endings — pre-existing files are CRLF, newly added ones LF. A `\n`-written
+  pattern silently fails to match a CRLF file, which surfaces as "pattern not
+  found", indistinguishable at a glance from a guard that moved. Two mutations
+  reported that before the harness learned to match the file's own endings.
 
 Phase 5 added a second isolation assertion at the graph layer: breaking the
 `WHERE user_id` filter in `database.list_documents` leaks a foreign document
