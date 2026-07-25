@@ -20,8 +20,8 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 - ✅ Phase 7 — RAG pipeline + synthesized answer card (`/api/answer`)
 - ✅ Phase 8 — demo seed dataset + "Load Demo Profile" button
 - 🚧 **Phase 9 — UI polish + edge cases** (current): frontend test suite (vitest,
-  107 tests), document delete, explicit "Ask AI" search done; manual category
-  override + real-doc testing next
+  115 tests), document delete, explicit "Ask AI" search, the manual category
+  override done; real-document edge-case testing next
 - ⬜ Phase 10+ — deployment, deliverables
 
 ### Phase 1 capabilities
@@ -249,11 +249,41 @@ validator results and the two candidate orderings that failed.
   offer an AI answer, so an **Ask AI about these results** button synthesizes one
   on demand — grounded in exactly the sources shown — without touching the
   instant-search path.
-- **Frontend test suite.** The React app now has 107 vitest + Testing Library
+- **Manual category override.** `PATCH /api/documents/{id}/category` lets the user
+  overrule Gemini from the timeline entry, completing plan.md § Risk Mitigation's
+  "allow manual override". The six-category taxonomy cannot fit everything — a
+  whole GitHub *profile* is not a project, a skill, or a certification, and lands
+  in *Projects* — so rather than fight the model, the user gets the last word.
+  Deliberately narrow: it relabels, and nothing else moves. Not the original, not
+  the extracted text, not the entities, and not `confidence`, which reports on the
+  *model's* classification and would be a lie about a category the model did not
+  choose. The choice is recorded as `category_source: manual` — surfaced on every
+  document so nothing presents a user's correction as the AI's judgment, and
+  honoured by `/recategorize`, which would otherwise quietly undo the override the
+  next time a degraded card was retried. No re-indexing: the graph types its skill
+  edges from `category` and computes them on read, so a certificate reclassified
+  as a project stops emitting `certifies_skill` edges by itself, and the vector
+  store never embedded the category at all.
+- **Search finds documents the model filed elsewhere.** Found by testing with a
+  real résumé. The router maps a typed word to a category ("resume" → *Academics*),
+  but the category is Gemini's judgment: it filed an actual résumé under *Skills*,
+  and the SQL filter then excluded the one document the query named. The category
+  was a guess at what the model *should* have chosen while the answer was already
+  stored — that document's `document_type` is literally `resume`. A filter keyword
+  now carries **both**, and a document matching *either* is a hit. The same fault
+  hid the seed's *Hackathon Winner Certificate* (`document_type=certificate`,
+  category *Achievements*) from "show all my certificates", a plan.md §16
+  must-work query.
+- **An empty filter falls back to semantic search.** The word→category guess is
+  the weakest link in the retrieval chain, and when it misses, the documents are
+  still there and still embedded — an empty page tells the user the opposite. A
+  filter that matches nothing is re-run as a semantic search, and the response
+  says so (`fell_back`) so the UI can mark the rows as *closest matches* rather
+  than passing related results off as the exact set the query named.
+- **Frontend test suite.** The React app now has 115 vitest + Testing Library
   tests where it had none (see [Frontend](#frontend)).
-- **Next:** manual category override (reclassify a document from its timeline
-  entry — a whole GitHub profile lands in *Projects* under the fixed taxonomy) and
-  real-document edge-case testing.
+- **Next:** real-document edge-case testing (a scanned image, an awkward PDF, a
+  dead or private-IP URL, an empty entry, responsive layout).
 
 ### Original Format Preservation
 
@@ -338,14 +368,15 @@ cd backend
 | POST   | `/api/upload`                   | Multipart upload → extracted text + sha256 + categorization |
 | POST   | `/api/ingest-url`               | `{ "url": "..." }` → scraped text + categorization, stored; GitHub repos/profiles also return a `details` object |
 | POST   | `/api/ingest-text`              | `{ "text": "..." }` → written response, categorized + stored |
-| POST   | `/api/search`                   | `{ "query": "...", "k": 5 }` → routed to a SQL filter or semantic vector search; ranked source documents. `answerable` flags a question-shaped query for the answer card |
+| POST   | `/api/search`                   | `{ "query": "...", "k": 5 }` → routed to a SQL filter (matching category **or** document type) or semantic vector search; ranked source documents. `answerable` flags a question-shaped query for the answer card; `fell_back` marks results served semantically after an empty filter |
 | POST   | `/api/answer`                   | `{ "query": "...", "doc_ids": [...] }` → Gemini-synthesized RAG answer grounded in those documents, with citations + any degradation |
 | POST   | `/api/seed-demo`                | Load the 10-document demo profile (plan.md §14); idempotent, no Gemini call |
 | GET    | `/api/graph`                    | `{ nodes, edges }` for the knowledge graph — documents, skill hubs, career paths, and their edges |
 | POST   | `/api/career-paths`             | Infer career trajectories over the whole profile (Gemini); persists and returns them + any degradation |
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
-| POST   | `/api/documents/{id}/recategorize` | Re-run categorization over the preserved text (the retry path); updates the row in place |
+| POST   | `/api/documents/{id}/recategorize` | Re-run categorization over the preserved text (the retry path); updates the row in place. A manually overridden category is kept |
+| PATCH  | `/api/documents/{id}/category`  | `{ "category": "..." }` → manually override the AI's category (one of the six); marks it `manual`. User-scoped |
 | DELETE | `/api/documents/{id}`           | Delete a document from every store — SQLite, vectors, and the original + sidecar; user-scoped |
 | GET    | `/api/documents/{id}/download`  | Original file, integrity-verified                       |
 | GET    | `/api/documents/{id}/verify`    | Recompute checksum, report match                        |
@@ -379,7 +410,7 @@ API quota.
 
 ```bash
 cd backend
-pytest              # 319 tests, no network, ~1 min
+pytest              # 350 tests, no network, ~2 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 5 more that call the real Gemini API (needs a key, ~1 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
@@ -403,7 +434,7 @@ actually ranks first.
 | `test_dates.py`          | Repo creation dates, and the known-vs-assumed date flag    |
 | `test_github_ingest.py`  | Repo enrichment, profile scraping, URL routing, and the link-scheme guard |
 | `test_embeddings.py`     | Chunking, add/query/delete, multi-chunk dedup, **user_id isolation**, rebuild-from-SQLite |
-| `test_search.py`         | Query routing (filter vs semantic) and the `/api/search` endpoint |
+| `test_search.py`         | Query routing (filter vs semantic), the `/api/search` endpoint, the category-vs-document-type mismatch, and the empty-filter fallback |
 | `test_relationship_engine.py` | Entity + similarity edge construction (Module 3 Layers A/B) |
 | `test_graph_api.py`      | `/api/graph` nodes/edges, career merge, and **mutation-tested user isolation** |
 | `test_career_path.py`    | Career-path inference — index mapping, clamping, never-raises, no-wipe on degrade |
@@ -411,6 +442,7 @@ actually ranks first.
 | `test_rag.py`            | RAG synthesis — grounding, citation clamping, never-raises/degrades, `/api/answer` |
 | `test_seed.py`           | Demo seed — endpoint, idempotency, non-destructive re-seed, the Python skill hub |
 | `test_delete.py`         | Document deletion across SQLite, vectors, and the file/sidecar; **user-scoped isolation** |
+| `test_category_override.py` | The manual override — the taxonomy guard, relabel-only (original/text/entities untouched), the graph re-forming on read, survival of a re-categorization, **user-scoped isolation** |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference |
 
@@ -456,7 +488,7 @@ into `GET /api/graph` and turns `test_graph_excludes_other_users_documents` red
 
 ```bash
 cd frontend
-npm test            # 107 tests (vitest run), jsdom, ~25s
+npm test            # 115 tests (vitest run), jsdom, ~50s
 npm run test:watch  # same, in watch mode
 ```
 
@@ -479,7 +511,7 @@ the code they cover.
 | `components/Search.test.jsx` | Filter-vs-question routing, RAG grounded in the returned ids, sources-only degrade, and the explicit **Ask AI** button |
 | `components/Upload.test.jsx` | File / URL / text routing and the deferred item-A **per-input independence** (files busy must not disable the URL input) |
 | `components/GitHubCard.test.jsx` | The repo vs profile shapes, the repo-list cap disclosure, and the Upload dispatch that selects this card |
-| `components/TimelineEntry.test.jsx` | The delete flow — the two-step confirm gate, notify-parent-to-refetch on success, keep-and-error on failure |
+| `components/TimelineEntry.test.jsx` | The delete flow — the two-step confirm gate, notify-parent-to-refetch on success, keep-and-error on failure — and the category override (badge moves on the server's answer only, "set by you" never claimed for an AI category, Uncategorized never offered) |
 
 The `cardParts` suite also covers the rule-bearing shared primitives —
 `Confidence` (0.0 is the couldn't-classify warning, not an empty meter),
@@ -490,3 +522,18 @@ flipping Timeline's undated-last comparison reddens the matching grouping test,
 and every suite added since was validated the same way (e.g. dropping the
 knowledge-graph missing-endpoint guard, suppressing the Ask AI button, or wiring
 delete past its confirm each reddens exactly the test that asserts it).
+
+The category override produced two more hollow assertions worth recording, both
+green until mutation found them:
+
+- The failed-save test asserted the old category was still *on screen*. The open
+  picker renders a chip per category, so it passed even when the badge had
+  optimistically moved to a category the server rejected. It now asserts inside
+  the badge's own group — a document-wide text query cannot tell a badge from a
+  chip that happens to say the same word.
+- The backend's "a re-categorization does not revert a manual override" test
+  passed with the database guard removed, because the route was *also* applying
+  the rule to the value it sent. Two copies of one rule, and the test could not
+  see which one it was exercising. The route now reports whatever
+  `update_categorization` stored rather than deciding for itself, leaving one
+  guard — which the test does redden.

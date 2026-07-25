@@ -271,6 +271,12 @@ Internship ─────leads_to─────────▶ Career Path
 - Parse user query → detect if it's a category filter
 - "Show all certificates" → `SELECT * FROM documents WHERE category = 'Certifications'`
 - "My AI projects" → `SELECT * FROM documents WHERE category = 'Projects' AND skills LIKE '%AI%'`
+- A keyword matches **category OR `document_type`**. The category is Gemini's
+  judgment and can differ from what the document plainly is — a real résumé was
+  filed under *Skills*, so a filter on *Academics* alone hid the very document
+  "show my resume" names. A filter that still matches nothing falls back to
+  semantic search, flagged so the UI shows the rows as closest matches rather
+  than as the exact set.
 
 **Path 2 — Semantic Search (RAG):**
 - Embed the user query
@@ -547,7 +553,7 @@ TraceAI/
 │       ├── graph.py             # GET /api/graph
 │       ├── career.py            # POST /api/career-paths
 │       ├── seed.py              # POST /api/seed-demo (loads the demo profile)
-│       └── documents.py         # list / detail / download / verify (also feeds the timeline)
+│       └── documents.py         # list / detail / download / verify / delete / category override
 ├── frontend/
 │   ├── package.json
 │   ├── vite.config.js
@@ -606,21 +612,36 @@ TraceAI/
 | **Phase 6** | Timeline view + search UI | 2 hours | ✅ done (Views 2 & 4) |
 | **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours | ✅ done (`ai/rag.py`, `/api/answer`, answer card) |
 | **Phase 8** | Sample demo dataset + seed script | 1 hour | ✅ done (`seed/seed_demo.py`, `/api/seed-demo`, "Load Demo Profile" button) |
-| **Phase 9** | UI polish, testing with real docs, edge cases — frontend test suite (vitest, 107 tests), document delete, explicit "Ask AI" search **done**; manual category override + real-doc testing **next** | 2 hours | ⬜ |
+| **Phase 9** | UI polish, testing with real docs, edge cases — frontend test suite (vitest, 115 tests), document delete, explicit "Ask AI" search, manual category override, and a real-document search fix **done**; the rest of the edge-case pass **next** | 2 hours | ⬜ |
 | **Phase 10** | Deployment (Vercel + Render) | 2 hours | ⬜ |
 | **Phase 11** | Demo video, README, architecture diagram, thought process | 2 hours | ⬜ |
 | **Total** | | **~25 hours** | |
 
-> **Planned next — manual category override (deferred from Phase 9's browser review).**
-> Let the user reclassify a document from its timeline entry. Categorization is a
-> Gemini judgment against the fixed six-category taxonomy (§4 Module 2), and a
-> whole GitHub *profile* has no clean fit — it lands in *Projects*. Rather than
-> fight the model, allow an explicit override, which also completes the
-> § Risk Mitigation "allow manual override" mitigation. Same timeline-entry
-> surface as the delete action. Two other items from that review already shipped
-> in Phase 9: **document delete** (`DELETE /api/documents/{id}`, cleaning SQLite +
+> **All three items from Phase 9's browser review have now shipped.**
+> **Manual category override** (`PATCH /api/documents/{id}/category`) lets the
+> user reclassify a document from its timeline entry. Categorization is a Gemini
+> judgment against the fixed six-category taxonomy (§4 Module 2), and a whole
+> GitHub *profile* has no clean fit — it lands in *Projects*. Rather than fight
+> the model, the user gets the last word, which completes the § Risk Mitigation
+> "allow manual override" mitigation. The choice is recorded as
+> `category_source: manual`, so a later re-categorization does not silently undo
+> it and nothing presents the user's correction as the model's judgment. The
+> other two: **document delete** (`DELETE /api/documents/{id}`, cleaning SQLite +
 > vectors + the original/sidecar) and an **explicit "Ask AI" button** on search
 > (on-demand RAG synthesis for queries that don't auto-answer).
+>
+> **The real-document pass has already earned its keep.** Uploading an actual
+> résumé surfaced a retrieval bug the seed data could never show: the router
+> predicted *Academics* from the word "resume", Gemini had filed the résumé under
+> *Skills*, and the structured filter excluded the one document the query named
+> (§4 Module 5 Path 1 now records the fix — match category **or** `document_type`,
+> and fall back to semantic search on an empty filter). The same fault hid the
+> seed's own *Hackathon Winner Certificate* from "show all my certificates", a §16
+> must-work query.
+>
+> **Still open before Phase 9 can close:** the rest of the real-document
+> edge-case pass (scanned image, awkward PDF, dead or private-IP URL, empty
+> entry, responsive layout) and a browser pass over the new UI.
 
 ---
 
