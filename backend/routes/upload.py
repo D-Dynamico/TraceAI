@@ -301,7 +301,7 @@ async def recategorize(doc_id: str) -> CategorizationResponse:
     filename = doc.get("filename") or ""
     result = await run_in_threadpool(categorizer.categorize, raw_text, filename)
 
-    await run_in_threadpool(
+    stored_category = await run_in_threadpool(
         database.update_categorization,
         doc_id,
         document_type=result.document_type,
@@ -315,6 +315,13 @@ async def recategorize(doc_id: str) -> CategorizationResponse:
         people=result.people,
         tags=result.tags,
     )
+
+    # The write is what decides the category — a manual override survives a
+    # re-run (see database.update_categorization), so the fresh model answer is
+    # not necessarily what is stored. Report what is, or the card contradicts
+    # the row it was just written from.
+    if stored_category != result.category:
+        result = result.model_copy(update={"category": stored_category})
 
     # The title is prepended to each embedded chunk, so a changed title means the
     # vectors are stale — re-index. Best-effort, as on the ingest paths.

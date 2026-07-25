@@ -142,6 +142,11 @@ class DocumentSummary(BaseModel):
     # guess.
     effective_date: str | None = None
     date_source: str = "assumed"  # "extracted" | "assumed"
+    # Who chose the category: "ai" (Gemini) or "manual" (the user overrode it —
+    # plan.md § Risk Mitigation). Resolved server-side in database._row_to_dict,
+    # like date_source, so no client re-derives it. A manual category is not
+    # described by `confidence`, which reports on the *model's* classification.
+    category_source: str = "ai"
     confidence: float | None = None
     checksum: str | None = None
     # True when there is an original file to download; False for URL / text_entry

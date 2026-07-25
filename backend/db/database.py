@@ -26,6 +26,16 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
+# Who chose a document's category. Stored inside `metadata_json` rather than as
+# a column: it describes the *provenance* of one field, not the document, and
+# `metadata_json` is already where per-document extras live (extraction method,
+# scrape warnings). "manual" means the user overrode Gemini's answer — a fixed
+# six-category taxonomy cannot fit everything (a whole GitHub *profile* has no
+# clean slot and lands in Projects), so plan.md § Risk Mitigation calls for an
+# explicit override rather than fighting the model.
+MANUAL_CATEGORY_SOURCE = "manual"
+AI_CATEGORY_SOURCE = "ai"
+
 
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
@@ -202,16 +212,40 @@ def update_categorization(
     organizations: list[str] | None = None,
     people: list[str] | None = None,
     tags: list[str] | None = None,
-) -> None:
+) -> str | None:
     """Overwrite a document's AI metadata after a re-run (the retry path).
+
+    Returns the category actually stored, which is the caller's value unless a
+    manual override was protected below. The caller needs it: the response it
+    builds from its own fresh `Categorization` would otherwise name a category
+    the row does not hold, and the UI believes the response. Returning it keeps
+    the decision in exactly one place instead of asking the route to re-derive
+    it — a second copy of this rule is a second thing to get wrong, and it would
+    mask the loss of this one.
 
     Updates the categorization columns and *replaces* the entity/tag rows —
     Module 3 joins on those, so a re-categorization that changed the skills must
     not leave the old ones behind. The original file, checksum, and raw_text are
     never touched: re-categorizing re-reads the same preserved text, it does not
     alter it (see CLAUDE.md — originals are never modified).
+
+    A **manually overridden category survives the re-run.** The user picked it
+    because the model's answer was wrong; silently replacing it with a fresh
+    model answer would undo their correction the next time a retryable
+    degradation is retried. Everything else the model produces (title, summary,
+    skills, date) is still overwritten — only the field the user took ownership
+    of is protected. Held here rather than in the route so no future caller can
+    forget it.
     """
     with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT category, metadata_json FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        if existing is not None and (
+            _category_source(existing["metadata_json"], doc_id) == MANUAL_CATEGORY_SOURCE
+        ):
+            category = existing["category"]
+
         conn.execute(
             """
             UPDATE documents
@@ -245,6 +279,45 @@ def update_categorization(
             conn.executemany(
                 "INSERT INTO tags (document_id, tag) VALUES (?, ?)", tag_rows
             )
+
+    return category
+
+
+def set_category(doc_id: str, category: str, user_id: str = "demo") -> bool:
+    """Manually override a document's category. Returns True if it existed.
+
+    Writes exactly two things: the `category` column and a `category_source`
+    marker in `metadata_json`. Nothing else moves — not the original file, not
+    `raw_text`, not the checksum, not the entity/tag rows, not `confidence`.
+    Confidence is the model's report on its *own* classification; leaving it
+    untouched keeps that honest, and `category_source` is what tells a reader the
+    category no longer came from the model.
+
+    Scoped to `user_id`, the same isolation boundary `delete_document` and the
+    graph enforce.
+
+    The graph and the search filters both read `category` straight from this
+    table (edges are computed on read, per Phase 5), so an override re-forms the
+    graph — a certificate reclassified as a project stops emitting
+    `certifies_skill` edges — with no re-index. The vector store embeds title and
+    text, never the category, so it is untouched too.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT metadata_json FROM documents WHERE id = ? AND user_id = ?",
+            (doc_id, user_id),
+        ).fetchone()
+        if row is None:
+            return False
+
+        metadata = _parse_metadata(row["metadata_json"], doc_id)
+        metadata["category_source"] = MANUAL_CATEGORY_SOURCE
+        conn.execute(
+            "UPDATE documents SET category = ?, metadata_json = ?"
+            " WHERE id = ? AND user_id = ?",
+            (category, json.dumps(metadata), doc_id, user_id),
+        )
+    return True
 
 
 def delete_document(doc_id: str, user_id: str = "demo") -> bool:
@@ -439,13 +512,35 @@ def _resolve_date(doc: dict[str, Any]) -> None:
     )
 
 
+def _parse_metadata(raw: str | None, doc_id: str | None = None) -> dict[str, Any]:
+    """Decode a `metadata_json` blob, tolerating junk. Always a dict."""
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        logger.warning("Malformed metadata_json for document %s", doc_id)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _category_source(raw: str | None, doc_id: str | None = None) -> str:
+    """Who chose this document's category — `manual` or `ai`.
+
+    Anything other than an explicit "manual" marker reads as the model's own
+    answer, so a missing or malformed blob can never claim a user override that
+    did not happen.
+    """
+    if _parse_metadata(raw, doc_id).get("category_source") == MANUAL_CATEGORY_SOURCE:
+        return MANUAL_CATEGORY_SOURCE
+    return AI_CATEGORY_SOURCE
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     doc = dict(row)
     raw = doc.pop("metadata_json", None)
-    try:
-        doc["metadata"] = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        logger.warning("Malformed metadata_json for document %s", doc.get("id"))
-        doc["metadata"] = {}
+    doc["metadata"] = _parse_metadata(raw, doc.get("id"))
+    # Derived here, in the one place every reader passes through, for the same
+    # reason `effective_date` is: a consumer that read `category` without this
+    # would present a user's correction as the model's judgment.
+    doc["category_source"] = _category_source(raw, doc.get("id"))
     _resolve_date(doc)
     return doc

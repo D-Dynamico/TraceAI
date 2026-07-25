@@ -21,7 +21,7 @@ from pydantic import BaseModel
 import storage
 from ai import embeddings
 from db import database
-from models.document import DocumentDetail, DocumentSummary
+from models.document import CATEGORIES, DocumentDetail, DocumentSummary
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,16 @@ class IntegrityResponse(BaseModel):
 class DeleteResponse(BaseModel):
     id: str
     deleted: bool
+
+
+class CategoryRequest(BaseModel):
+    category: str
+
+
+class CategoryResponse(BaseModel):
+    id: str
+    category: str
+    category_source: str
 
 
 def _lookup(doc_id: str):
@@ -71,6 +81,43 @@ def get_document(doc_id: str) -> DocumentDetail:
     if row is None:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
     return DocumentDetail.model_validate(row)
+
+
+@router.patch("/{doc_id}/category", response_model=CategoryResponse)
+def set_category(doc_id: str, payload: CategoryRequest) -> CategoryResponse:
+    """Manually override a document's category (plan.md § Risk Mitigation).
+
+    Categorization is a Gemini judgment against a fixed six-category taxonomy,
+    and some documents genuinely have no clean slot — a whole GitHub *profile*
+    is not a project, a skill, or a certification, and lands in *Projects*.
+    Rather than fight the model, the user gets the last word.
+
+    PATCH, not POST: this is a partial update of the document resource, and it
+    changes one field. The category must be one of the six in the taxonomy — an
+    override may correct a classification, not invent a seventh category that
+    the palette, the filter chips, and the graph know nothing about.
+
+    Deliberately narrow. It does not re-run Gemini (that is `/recategorize`), it
+    does not touch the original, the extracted text, or the extracted entities,
+    and it does not re-index: the graph computes its edges from `category` on
+    read, so the override takes effect on the next graph load by itself.
+    """
+    category = payload.category.strip()
+    if category not in CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Category must be one of: {', '.join(sorted(CATEGORIES))}.",
+        )
+
+    updated = database.set_category(doc_id, category, DEFAULT_USER)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
+
+    return CategoryResponse(
+        id=doc_id,
+        category=category,
+        category_source=database.MANUAL_CATEGORY_SOURCE,
+    )
 
 
 @router.delete("/{doc_id}", response_model=DeleteResponse)
