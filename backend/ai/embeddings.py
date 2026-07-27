@@ -2,10 +2,19 @@
 
 The semantic half of search. Three things this module takes seriously:
 
-1. **Embeddings are local and free.** `all-MiniLM-L6-v2` runs on CPU via
-   sentence-transformers, so unlike the Gemini path in `categorizer.py` there is
-   **no rate limiter** — do not add one. A batch upload embeds as fast as the CPU
-   allows.
+1. **Embeddings are local and free.** `all-MiniLM-L6-v2` runs on CPU, so unlike
+   the Gemini path in `categorizer.py` there is **no rate limiter** — do not add
+   one. A batch upload embeds as fast as the CPU allows.
+
+   It runs through **Chroma's bundled ONNX export**, not sentence-transformers,
+   because the deploy target (Render free) caps an instance at 512 MB and torch
+   does not fit: measured peak working set for this exact workload was **439 MB
+   resident for sentence-transformers versus 212 MB for ONNX**, before FastAPI,
+   Chroma, and PyMuPDF are counted. Same model, same weights — the two backends
+   were verified to produce **identical** vectors (minimum per-chunk cosine
+   1.0000) over the Phase 8 seed, yielding the same four `similar_to` edges at
+   the 0.75 threshold with scores equal to three decimals. So this is a memory
+   decision only; retrieval behaviour is unchanged.
 
 2. **SQLite is the source of truth; Chroma is derived.** Every document's
    `raw_text` is preserved in SQLite, so a deleted or corrupt `data/chroma/` is
@@ -53,6 +62,13 @@ MAX_CHUNKS = 40
 _QUERY_POOL_FACTOR = 5
 _QUERY_POOL_MIN = 20
 
+# Embed in small batches rather than handing the backend all MAX_CHUNKS at once.
+# The batch is padded to its longest member and held in memory as one tensor, so
+# a single 40-chunk shot peaked at 500 MB against Render free's 512 MB ceiling;
+# at 8 it peaks at 315 MB. Both measured. The cost is more forward passes on a
+# document long enough to hit the cap, which is milliseconds on local CPU.
+EMBED_BATCH = 8
+
 _model = None
 _model_lock = threading.Lock()
 _client = None
@@ -64,21 +80,23 @@ _store_lock = threading.Lock()
 
 
 def _get_model():
-    """Lazily load and cache the sentence-transformer.
+    """Lazily load and cache the ONNX embedding function.
 
     Deferred so importing this module (and starting the app) does not trigger the
-    ~80MB model download; it happens on the first real embed. Tests stub
-    `embed_texts`, so they never reach here.
+    ~80MB model download; it happens on the first real embed. That matters on a
+    free instance, where a cold start with an empty store does no embedding at
+    all and should not pay for the model. Tests stub `embed_texts`, so they never
+    reach here.
     """
     global _model
     if _model is not None:
         return _model
     with _model_lock:
         if _model is None:
-            from sentence_transformers import SentenceTransformer
+            from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
-            logger.info("Loading embedding model %s", MODEL_NAME)
-            _model = SentenceTransformer(MODEL_NAME)
+            logger.info("Loading embedding model %s (onnx)", MODEL_NAME)
+            _model = ONNXMiniLM_L6_V2()
         return _model
 
 
@@ -87,14 +105,20 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
     The single point every embedding flows through — add, query, and reindex all
     call it, which is why tests stub exactly this one function. Vectors are
-    L2-normalized so cosine distance in Chroma matches plan.md §4's cosine
-    similarity.
+    L2-normalized (the ONNX embedder normalizes internally) so cosine distance in
+    Chroma matches plan.md §4's cosine similarity.
+
+    Batched at EMBED_BATCH to bound peak memory; see that constant.
     """
     if not texts:
         return []
     model = _get_model()
-    vectors = model.encode(texts, normalize_embeddings=True)
-    return [v.tolist() for v in vectors]
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), EMBED_BATCH):
+        for v in model(texts[start : start + EMBED_BATCH]):
+            # float32 ndarray from onnxruntime -> plain floats for Chroma/JSON.
+            vectors.append(v.tolist())
+    return vectors
 
 
 # --- Chunking -------------------------------------------------------------

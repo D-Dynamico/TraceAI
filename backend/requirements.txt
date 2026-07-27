@@ -29,13 +29,16 @@ beautifulsoup4==4.12.3
 google-generativeai==0.8.3
 
 # Embeddings + vector DB — Phase 4 (semantic search)
-# sentence-transformers runs all-MiniLM-L6-v2 locally (CPU torch), so embeddings
-# are free and not rate-limited, unlike the Gemini calls above. chromadb is the
-# vector store; SQLite stays the source of truth and the store is rebuildable
-# from it. Only the two direct deps are pinned — torch, transformers, onnxruntime
-# et al. are transitive.
+# all-MiniLM-L6-v2 runs locally, so embeddings are free and not rate-limited,
+# unlike the Gemini calls above. chromadb is the vector store; SQLite stays the
+# source of truth and the store is rebuildable from it.
+#
+# Deliberately NOT sentence-transformers: it pulls torch, which measured 439 MB
+# resident against Render free's 512 MB instance and cannot fit alongside the
+# app. chromadb ships an ONNX export of the same model (212 MB), and the two
+# were verified to produce identical vectors. Do not add sentence-transformers
+# back without re-measuring — see the note in ai/embeddings.py.
 chromadb==1.5.9
-sentence-transformers==5.6.0
 
 # Testing
 pytest==8.3.4
