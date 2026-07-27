@@ -363,7 +363,7 @@ export default function KnowledgeGraph() {
             : "Infer career paths"}
         </button>
         <span className="text-xs text-sand-500">
-          Reads your whole profile with AI to suggest trajectories · costs quota
+          Reads your whole profile with AI to suggest trajectories
         </span>
       </div>
 
