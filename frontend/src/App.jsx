@@ -4,6 +4,7 @@ import Upload from "./components/Upload";
 import Timeline from "./components/Timeline";
 import Search from "./components/Search";
 import KnowledgeGraph from "./components/KnowledgeGraph";
+import QuotaNotice from "./components/QuotaNotice";
 
 // Four views, one nav, no router (plan.md §6). A single piece of view state is
 // enough — there are no nested routes and no URLs to deep-link yet.
@@ -25,6 +26,11 @@ export default function App() {
         {view === "upload" && <Upload />}
         {view === "graph" && <KnowledgeGraph />}
       </main>
+      {/* Below the view, not above it: the ceiling is context a reviewer should
+          have, but it is not what any screen is about. Kept at reading width
+          even on the wider graph view so it reads as a footnote to the app
+          rather than as part of the graph. */}
+      <QuotaNotice />
     </div>
   );
 }
