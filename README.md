@@ -105,9 +105,12 @@ validator results and the two candidate orderings that failed.
 
 - **Semantic search.** `POST /api/search` finds documents by meaning, not
   keywords. Each document's `raw_text` is chunked (~900-char overlapping
-  windows, title prepended) and embedded with `sentence-transformers`
-  (all-MiniLM-L6-v2) into ChromaDB. Embedding runs locally on CPU, so unlike
-  the Gemini calls it is free and **not** rate-limited.
+  windows, title prepended) and embedded with **all-MiniLM-L6-v2** into
+  ChromaDB. Embedding runs locally on CPU, so unlike the Gemini calls it is free
+  and **not** rate-limited. The model runs through Chroma's bundled **ONNX**
+  export rather than sentence-transformers — same weights, verified to produce
+  identical vectors, but 212 MB resident instead of torch's 439 MB, which is
+  what makes it fit the 512 MB deploy target (see [Deployment](#deployment)).
 - **Instant filters, semantic fallback.** A deterministic router
   (`ai/query_router.py`) answers "show all my certificates" or "my latest
   resume" straight from SQLite — no embedding, no Gemini, no latency — and sends
@@ -391,6 +394,8 @@ cp .env.example .env
 | `GEMINI_MODEL`   | no              | Defaults to `gemini-3-flash-preview`             |
 | `DEBUG`          | no              | `true` enables verbose logging                   |
 | `VISION_OCR_ENABLED` | no          | Default `true`. Read scans with Gemini Vision when local OCR finds nothing. Off = local OCR only, so no text at all without Tesseract |
+| `CORS_ORIGINS`   | deploy only     | Comma-separated browser origins allowed to call the API. The Vite dev origins are always allowed on top |
+| `VITE_API_URL`   | deploy only     | **Frontend** build-time var (`frontend/.env` or the Vercel dashboard). Where the API lives; empty locally so the Vite proxy handles it |
 
 `.env` is gitignored — never commit it. For deployment (Phase 10), set these as
 environment variables in the host dashboard instead of shipping the file. If a key
@@ -402,6 +407,68 @@ Verify your config loaded (prints no secrets):
 cd backend
 .venv/Scripts/python.exe -c "from config import settings; print('key set:', bool(settings.gemini_api_key), '| model:', settings.gemini_model)"
 ```
+
+---
+
+## Deployment
+
+Two free services: **`traceai`** on Vercel (the frontend, and the submitted URL)
+and **`traceai-api`** on Render (FastAPI). Both are described by committed
+config — `vercel.json` and `render.yaml` — so the dashboards mostly just point
+at this repo. `vercel.json` carries no comments because JSON allows none; what
+it does is set the install/build commands and `frontend/dist` as the output. It
+adds no SPA rewrite on purpose: the app is a view switch with no router, so
+there are no client-side routes to rewrite.
+
+### Steps
+
+**Render — `traceai-api`:**
+
+1. **New → Blueprint**, connect this repo. Render reads `render.yaml`.
+2. Set **`GEMINI_API_KEY`** in the dashboard. It is `sync: false` in the
+   blueprint precisely so it is never committed.
+3. Deploy. The first build is slow — it installs dependencies and warms the
+   ~79 MB ONNX embedding model into the image so no user's first upload pays
+   for the download.
+4. Check `https://traceai-api.onrender.com/api/health` returns
+   `{"status": "ok", "ai_configured": true, ...}`. `ai_configured: false` means
+   the key did not reach the service.
+
+**Vercel — `traceai`:**
+
+1. **New Project**, import this repo. Vercel reads `vercel.json`.
+2. Set **`VITE_API_URL`** to the Render origin, no trailing slash
+   (`https://traceai-api.onrender.com`). Vite inlines it at **build** time, so
+   it must be set *before* the build — changing it later needs a redeploy, not
+   a restart.
+3. Deploy, open the site, confirm the timeline loads and "Load Demo Profile"
+   populates it.
+
+If the frontend lands on any origin other than `https://traceai.vercel.app`,
+update **`CORS_ORIGINS`** on the Render service to match or the browser will
+block every API call. The failure looks like a dead UI with CORS errors in the
+console, not a server error.
+
+### Free-tier constraints — know these before demoing
+
+- **No persistent disk.** `uploads/`, `data/traceai.db` and `data/chroma/` are
+  wiped on every deploy and every restart. Most of this self-heals: the vector
+  store rebuilds from SQLite, and "Load Demo Profile" re-seeds with no Gemini
+  call. **An uploaded original does not come back** — its `download` link 404s
+  afterwards, which is the one place the § Original Format Preservation
+  guarantee is limited by the host rather than by the code. The guarantee holds
+  for the lifetime of the instance; a reviewer returning days later sees the
+  demo profile, not their upload. A persistent disk is a paid feature.
+- **~15-minute spin-down.** The first request after an idle period waits for a
+  cold start. Deliberately **not** worked around with a keep-warm ping: the free
+  allowance is 750 instance-hours/month, which barely covers a single always-on
+  service, so pinging would spend the month's budget to save one wait.
+- **512 MB RAM.** The reason embeddings run on ONNX rather than torch. If you
+  reintroduce `sentence-transformers`, the service will OOM — re-measure before
+  changing anything under `ai/embeddings.py`.
+- **No Tesseract or Poppler**, and they cannot be installed on the native
+  Python runtime. Scans therefore go straight to the Gemini Vision rung, which
+  costs one extra call from the **20/day** budget per scanned upload.
 
 ---
 
@@ -458,14 +525,15 @@ cd backend
 pytest              # 374 tests, no network, ~1.5 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 7 more that call the real Gemini API (needs a key, ~2 min)
-pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~40s)
+pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~10s)
 ```
 
 Tests run against a per-test tmp directory, so they never write to the real
 `uploads/`, `data/traceai.db`, or `data/chroma/`. Embeddings are stubbed with
-deterministic vectors by default; the `model` tests opt into the real
-sentence-transformer to check its dimension and that a relevant document
-actually ranks first.
+deterministic vectors by default; the `model` tests opt into the real ONNX
+MiniLM to check its dimension and that a relevant document actually ranks first.
+They go through `embed_texts`, the single choke point, so they exercise whatever
+backend is wired in — which is how the torch→ONNX swap was checked.
 
 | File                     | Covers                                                    |
 | ------------------------ | --------------------------------------------------------- |

@@ -29,7 +29,7 @@ The brief states this twice, so it is treated as a hard guarantee:
 | Frontend         | React (Vite) + Tailwind CSS                           |
 | Backend          | Python (FastAPI)                                       |
 | LLM              | Google Gemini 3 Flash — free tier (**5 RPM, 20 RPD**) |
-| Embeddings       | `sentence-transformers` (all-MiniLM-L6-v2) — local    |
+| Embeddings       | all-MiniLM-L6-v2 (ONNX, via ChromaDB) — local         |
 | Vector DB        | ChromaDB                                               |
 | Structured DB    | SQLite                                                 |
 | OCR              | pytesseract + pdf2image (fallback for scans)           |
@@ -43,8 +43,8 @@ The brief states this twice, so it is treated as a hard guarantee:
 > **Why Gemini 3 Flash?**
 > The Gemini 2.0 series was retired in June 2026. Gemini 3 Flash is Google's current
 > recommended free-tier model — 1M token context window, with built-in vision
-> support. Combined with local sentence-transformers for embeddings, the entire AI
-> stack runs at **zero cost**.
+> support. Combined with a local embedding model, the entire AI stack runs at
+> **zero cost**.
 >
 > **The free tier is 5 RPM and 20 requests per _day_**, measured 2026-07-25 from
 > the API's own 429 payloads (`GenerateRequestsPerMinutePerProjectPerModel-FreeTier`
@@ -664,7 +664,7 @@ TraceAI/
 | Technique | Where Used |
 |---|---|
 | **NLP** | Document text extraction, entity recognition via Gemini |
-| **Embeddings** | sentence-transformers (local, free) for document vectorization |
+| **Embeddings** | all-MiniLM-L6-v2 (local, free) for document vectorization |
 | **Vector Database** | ChromaDB for similarity search |
 | **Semantic Search** | Cosine similarity on embeddings for retrieval |
 | **RAG** | Gemini + retrieved docs for intelligent Q&A |
@@ -744,10 +744,23 @@ A **live link beats a video** — reviewers can test it themselves.
 
 | Component | Host | Cost |
 |---|---|---|
-| Frontend (React) | Vercel or Netlify | Free |
-| Backend (FastAPI) | Render or Railway | Free tier |
-| Vector DB | ChromaDB (persistent disk) | Free |
-| SQLite | Local file on backend host | Free |
+| Frontend (React) | Vercel — `traceai` | Free |
+| Backend (FastAPI) | Render — `traceai-api` | Free tier |
+| Vector DB | ChromaDB on the backend host — **ephemeral** | Free |
+| SQLite | Local file on the backend host — **ephemeral** | Free |
+
+> **Corrected 2026-07-27:** this table previously claimed ChromaDB got a
+> *persistent disk*. Render's free tier has **no persistent disk at all**, so
+> `uploads/`, `data/traceai.db` and `data/chroma/` are wiped on every deploy and
+> every restart. Most of it self-heals — the vector store rebuilds from SQLite,
+> and §14's seed re-populates with no Gemini call — but an **uploaded original
+> does not come back**, so its download link 404s. That is the one place §1's
+> preservation guarantee is bounded by the host rather than the code, and it is
+> why the demo should lean on the seed profile. Two further free-tier facts the
+> build is shaped around: **512 MB RAM** (which is why embeddings run on ONNX,
+> not torch — torch alone measured 439 MB resident) and a **15-minute
+> spin-down**, deliberately not papered over with a keep-warm ping since the
+> 750 instance-hours/month allowance barely covers one always-on service.
 
 **Fallback:** If deployment proves fragile, submit a polished demo video plus
 clear local setup instructions. Do not let deployment eat build time.
@@ -783,7 +796,7 @@ which connects to an inferred AI/ML Engineer career path.
 | Criterion | Weight | How We Address It |
 |---|---|---|
 | **AI organization, categorization, retrieval** | 40% | Gemini auto-categorization with confidence scores; hybrid structured + semantic search; RAG answers with source citations; zero manual sorting required |
-| **AI/ML techniques** | 25% | Embeddings (sentence-transformers), vector DB (ChromaDB), semantic search (cosine similarity), RAG pipeline, NLP entity extraction, knowledge graph mapping |
+| **AI/ML techniques** | 25% | Embeddings (all-MiniLM-L6-v2, local), vector DB (ChromaDB), semantic search (cosine similarity), RAG pipeline, NLP entity extraction, knowledge graph mapping |
 | **Innovation, usefulness, UX** | 20% | Career path inference (goes beyond the brief); interactive force-directed graph; visual timeline; written-response input for undocumented achievements |
 | **Clarity of explanation** | 15% | Architecture diagram, thought process sheet, well-structured README, this plan document |
 
