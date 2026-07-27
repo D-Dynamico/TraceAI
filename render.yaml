@@ -1,0 +1,48 @@
+# Render blueprint for the TraceAI backend (plan.md §13, Phase 10).
+#
+# The frontend is NOT here — it deploys to Vercel from vercel.json. This file
+# describes one free-tier web service, `traceai-api`.
+#
+# Free-tier facts this file is shaped around:
+#   * No persistent disk. uploads/, data/traceai.db and data/chroma/ are wiped
+#     on every deploy and every restart. The app recovers (the store rebuilds
+#     from SQLite, and "Load Demo Profile" re-seeds with no Gemini call), but an
+#     UPLOADED ORIGINAL DOES NOT COME BACK — its download link 404s afterwards.
+#     Adding a disk is a paid feature; see the README's deployment section.
+#   * The instance spins down after ~15 minutes idle and cold-starts on the next
+#     request. Deliberately NOT worked around with a keep-warm ping: the free
+#     allowance is 750 instance-hours/month, which barely covers one always-on
+#     service, so pinging it would spend the month's budget to save one wait.
+#   * 512 MB RAM. This is why embeddings run on Chroma's ONNX MiniLM rather than
+#     sentence-transformers — torch alone measured 439 MB resident. See the note
+#     in backend/ai/embeddings.py before changing anything about embeddings.
+
+services:
+  - type: web
+    name: traceai-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # Warm Chroma's ONNX model into the image at build time. It is ~79 MB
+    # fetched on first use otherwise, which would land on a user's first upload
+    # after every cold start. If Render ever stops carrying the build filesystem
+    # into the instance, the cost is that download, not a failure.
+    buildCommand: >-
+      pip install -r requirements.txt &&
+      python -c "from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2; ONNXMiniLM_L6_V2()(['warm'])"
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+      # Set in the dashboard, never committed. Without it the app still runs —
+      # every Gemini caller degrades rather than failing — but nothing is
+      # categorized and search has no answer card.
+      - key: GEMINI_API_KEY
+        sync: false
+      # Browser origins allowed to call this API. The Vite dev origins are
+      # always allowed in addition to these (see config.py::cors_origin_list).
+      - key: CORS_ORIGINS
+        value: https://traceai.vercel.app
+      - key: DEBUG
+        value: "false"

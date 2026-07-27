@@ -7,6 +7,7 @@
 // entity chips, and the date. Those carry rules (palette constraints, the
 // plan.md § Risk Mitigation assumed-date flag) that must not be re-derived per card.
 
+import { downloadUrl } from "../api/client";
 import { categoryColor, METER_FILL, METER_TRACK } from "../categories";
 
 /** Category identity: a colored dot plus the name.
@@ -279,7 +280,7 @@ export function OriginalAction({ id, hasOriginal, sourceUrl }) {
     "shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600";
   if (hasOriginal) {
     return (
-      <a href={`/api/documents/${id}/download`} className={cls}>
+      <a href={downloadUrl(id)} className={cls}>
         Download original
       </a>
     );

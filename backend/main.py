@@ -37,13 +37,11 @@ except Exception:
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
-# Vite dev server runs on 5173 by default.
+# The Vite dev server (5173) plus whatever CORS_ORIGINS names — the deployed
+# frontend is configured in the host dashboard, never hardcoded here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

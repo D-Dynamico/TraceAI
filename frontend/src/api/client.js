@@ -1,6 +1,14 @@
 // Thin fetch wrapper around the TraceAI backend API.
 // Requests go to /api/* and are proxied to FastAPI by Vite in dev.
 
+// Where the API lives. Empty in dev and in tests, so every request stays a
+// same-origin /api/* path and Vite's proxy (vite.config.js) forwards it to
+// :8000 — unchanged behaviour. Deployed, the frontend is on Vercel and the API
+// on Render, a different origin, so VITE_API_URL supplies it at build time.
+// Vite inlines import.meta.env at build, so this cannot be changed after the
+// fact: rebuild the frontend to repoint it.
+const BASE = (import.meta.env?.VITE_API_URL ?? "").replace(/\/+$/, "");
+
 async function handle(res) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -13,12 +21,12 @@ async function handle(res) {
 export async function uploadFile(file) {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/upload", { method: "POST", body: form });
+  const res = await fetch(`${BASE}/api/upload`, { method: "POST", body: form });
   return handle(res);
 }
 
 export async function ingestUrl(url) {
-  const res = await fetch("/api/ingest-url", {
+  const res = await fetch(`${BASE}/api/ingest-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
@@ -27,7 +35,7 @@ export async function ingestUrl(url) {
 }
 
 export async function ingestText(text) {
-  const res = await fetch("/api/ingest-text", {
+  const res = await fetch(`${BASE}/api/ingest-text`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
@@ -36,7 +44,7 @@ export async function ingestText(text) {
 }
 
 export async function search(query, k = 5) {
-  const res = await fetch("/api/search", {
+  const res = await fetch(`${BASE}/api/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, k }),
@@ -49,7 +57,7 @@ export async function search(query, k = 5) {
 // the answer is grounded in exactly the visible sources. Carries the item-B
 // degradation contract (degraded_reason / retryable).
 export async function answer(query, docIds) {
-  const res = await fetch("/api/answer", {
+  const res = await fetch(`${BASE}/api/answer`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, doc_ids: docIds }),
@@ -58,17 +66,19 @@ export async function answer(query, docIds) {
 }
 
 export async function listDocuments() {
-  const res = await fetch("/api/documents");
+  const res = await fetch(`${BASE}/api/documents`);
   return handle(res);
 }
 
 export async function getDocument(id) {
-  const res = await fetch(`/api/documents/${id}`);
+  const res = await fetch(`${BASE}/api/documents/${id}`);
   return handle(res);
 }
 
 export async function recategorize(id) {
-  const res = await fetch(`/api/documents/${id}/recategorize`, { method: "POST" });
+  const res = await fetch(`${BASE}/api/documents/${id}/recategorize`, {
+    method: "POST",
+  });
   return handle(res);
 }
 
@@ -78,7 +88,7 @@ export async function recategorize(id) {
 // The server accepts only the six taxonomy categories and marks the result
 // `category_source: "manual"`.
 export async function setCategory(id, category) {
-  const res = await fetch(`/api/documents/${id}/category`, {
+  const res = await fetch(`${BASE}/api/documents/${id}/category`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ category }),
@@ -89,12 +99,12 @@ export async function setCategory(id, category) {
 // Hard-delete a document from every store (SQLite, the vector index, and the
 // original file + sidecar for an uploaded file). Scoped to the user server-side.
 export async function deleteDocument(id) {
-  const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}/api/documents/${id}`, { method: "DELETE" });
   return handle(res);
 }
 
 export async function getGraph() {
-  const res = await fetch("/api/graph");
+  const res = await fetch(`${BASE}/api/graph`);
   return handle(res);
 }
 
@@ -102,7 +112,7 @@ export async function getGraph() {
 // the graph), not run on every graph read. The response carries the item-B
 // degradation contract (degraded_reason / retryable) so the UI can offer a retry.
 export async function inferCareerPaths() {
-  const res = await fetch("/api/career-paths", { method: "POST" });
+  const res = await fetch(`${BASE}/api/career-paths`, { method: "POST" });
   return handle(res);
 }
 
@@ -110,11 +120,18 @@ export async function inferCareerPaths() {
 // server-side with no Gemini call. Idempotent: re-loading replaces the prior
 // demo docs rather than duplicating them.
 export async function seedDemo() {
-  const res = await fetch("/api/seed-demo", { method: "POST" });
+  const res = await fetch(`${BASE}/api/seed-demo`, { method: "POST" });
   return handle(res);
 }
 
 export async function health() {
-  const res = await fetch("/api/health");
+  const res = await fetch(`${BASE}/api/health`);
   return handle(res);
+}
+
+// The download link is a plain href, not a fetch, so it needs the same base.
+// Exported rather than built inline in a component: there is one API origin and
+// this file owns it.
+export function downloadUrl(id) {
+  return `${BASE}/api/documents/${id}/download`;
 }

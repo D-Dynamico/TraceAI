@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     db_path: Path = PROJECT_ROOT / "data" / "traceai.db"
     chroma_dir: Path = PROJECT_ROOT / "data" / "chroma"
 
+    # --- Deployment (Phase 10) ---
+    # Extra browser origins allowed to call this API, comma-separated — the
+    # deployed frontend (https://traceai.vercel.app) and any preview URL. Set in
+    # the host dashboard, not committed, so renaming the site or adding a preview
+    # origin needs no code change and no redeploy of the backend image.
+    cors_origins: str = ""
+
     # --- Ingestion ---
     # Max upload size in bytes (25 MB default)
     max_upload_bytes: int = 25 * 1024 * 1024
@@ -46,6 +53,21 @@ class Settings(BaseSettings):
     # tier. Off is for saving free-tier quota on a machine where Tesseract
     # works — it costs one extra Gemini call per scanned upload.
     vision_ocr_enabled: bool = True
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Allowed browser origins: the Vite dev server plus anything configured.
+
+        The dev origins stay allowed in production deliberately. There is no auth
+        yet (plan.md § Stretch Goals), so CORS is not this app's security
+        boundary — anything can call the API directly with curl regardless. What
+        it does buy is being able to point a local frontend at the deployed API
+        while debugging, which is worth more here than a restriction that stops
+        nothing.
+        """
+        origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+        origins += [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return origins
 
     def ensure_dirs(self) -> None:
         """Create storage directories if they don't exist yet."""

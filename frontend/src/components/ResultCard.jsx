@@ -6,7 +6,7 @@
 // cardParts.jsx, so what differs here is arrangement, not logic.
 
 import { useState } from "react";
-import { recategorize } from "../api/client";
+import { downloadUrl, recategorize } from "../api/client";
 import {
   AssumedDateNotice,
   CardShell,
@@ -82,7 +82,7 @@ export default function ResultCard({ result }) {
         <div className="flex shrink-0 items-center gap-2">
           {isFile && (
             <a
-              href={`/api/documents/${result.id}/download`}
+              href={downloadUrl(result.id)}
               className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600"
             >
               Download original
