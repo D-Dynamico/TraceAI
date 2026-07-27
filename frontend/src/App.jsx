@@ -11,7 +11,7 @@ export default function App() {
   const [view, setView] = useState("timeline");
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen bg-parchment">
       <NavBar view={view} onChange={setView} />
       {/* The graph is the judge-facing view (plan.md §6 View 3) and wants room —
           it gets a wider container than the reading-width views. */}

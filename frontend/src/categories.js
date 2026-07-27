@@ -71,9 +71,35 @@ export const CATEGORY_CHOICES = Object.keys(CATEGORY_COLORS).filter(
 // slate (achromatic — reads as "a different kind of thing", not a category),
 // plus a larger node, right-side placement, and a mandatory title + match-%
 // label. Identity never rests on this color alone.
-export const CAREER_PATH_COLOR = "#334155";
+//
+// Ported warm with the rest of the theme: the requirement is that it be
+// *achromatic* (so it cannot read as a category), not that it be cool, and a
+// cool slate was the one dark tone left looking blue-grey against warm paper.
+// Solved to the same contrast the old #334155 had on this surface — 9.64:1
+// against 9.61:1 — so a career-path node kept its exact visual weight, and the
+// near-black selection ring still separates from it by the prior margin.
+export const CAREER_PATH_COLOR = "#453f38";
 
-// Sequential blue ramp, used for the confidence meter. Track is the near-zero
-// step; fill is the same hue stepped dark enough to read on white.
-export const METER_TRACK = "#cde2fb";
+// Structural colors that have to exist as JS literals: SVG `stroke`/`fill`
+// attributes and inline `style` cannot take a Tailwind class. They live here so
+// the app still has ONE place where a color is decided. Keep them in step with
+// the `sand` scale in tailwind.config.js — the comment beside each says which
+// step it is.
+export const SURFACE_PAPER = "#faf6ef"; // the card surface; also the ring that separates overlapping graph nodes
+export const GRAPH_EDGE = "#dcd3c4"; // sand-300, recessive by design
+export const GRAPH_EDGE_ACTIVE = "#554e44"; // sand-600
+export const GRAPH_NODE_SELECTED = "#191715"; // sand-900
+
+// The confidence meter. This is a track plus a fill, NOT a two-step sequential
+// ramp — the distinction matters because the ordinal validator judges a ramp of
+// data *marks*, where the lightest step must itself read as a mark, and it
+// therefore FAILs a groove by design. (It failed the old cool track on white
+// too, at 1.32:1, so that verdict long predated the warm theme.)
+//
+// The track is the groove and takes a surface color; the fill is the datum and
+// keeps the Certifications blue, which clears 3:1 on paper. The track moved
+// from a cool #cde2fb to sand-300 because a blue-white groove read as a cold
+// patch on warm paper — the one place the theme change altered a measured
+// value rather than just its hue.
+export const METER_TRACK = "#dcd3c4"; // sand-300
 export const METER_FILL = "#2a78d6";

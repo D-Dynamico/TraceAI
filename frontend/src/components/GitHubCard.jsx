@@ -36,7 +36,7 @@ function Facts({ items }) {
   const shown = items.filter(Boolean);
   if (!shown.length) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-sand-600">
       {shown.map((item, i) => (
         <span key={i} className="inline-flex items-center gap-1">
           {item}
@@ -58,11 +58,11 @@ function Facts({ items }) {
 function Languages({ items }) {
   if (!items?.length) return null;
   return (
-    <p className="text-xs text-slate-500">
+    <p className="text-xs text-sand-500">
       {items.map((lang, i) => (
         <span key={lang.name}>
           {i > 0 && " · "}
-          <span className="text-slate-700">{lang.name}</span> {lang.percent}%
+          <span className="text-sand-700">{lang.name}</span> {lang.percent}%
         </span>
       ))}
     </p>
@@ -83,7 +83,7 @@ function ExternalLink({ href, children }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="truncate text-indigo-600 transition hover:text-indigo-700 hover:underline"
+      className="truncate text-espresso-600 transition hover:text-espresso-700 hover:underline"
     >
       {children} ↗
     </a>
@@ -95,25 +95,25 @@ function RepoFacts({ details }) {
   const forks = num(details.forks);
 
   return (
-    <div className="mt-3 space-y-1.5 rounded-md bg-slate-50 px-3 py-2.5">
+    <div className="mt-3 space-y-1.5 rounded-md bg-sand-200 px-3 py-2.5">
       <Facts
         items={[
           stars && (
             <>
               <span aria-hidden="true">★</span>
               <span className="tabular-nums">{stars}</span>
-              <span className="text-slate-400">stars</span>
+              <span className="text-sand-500">stars</span>
             </>
           ),
           forks && (
             <>
               <span className="tabular-nums">{forks}</span>
-              <span className="text-slate-400">forks</span>
+              <span className="text-sand-500">forks</span>
             </>
           ),
           details.license,
           details.pushed && (
-            <span className="text-slate-500">
+            <span className="text-sand-500">
               active {formatMonth(details.pushed)}
             </span>
           ),
@@ -141,13 +141,13 @@ function ProfileFacts({ details }) {
   const more = typeof total === "number" && total > listed;
 
   return (
-    <div className="mt-3 space-y-2 rounded-md bg-slate-50 px-3 py-2.5">
+    <div className="mt-3 space-y-2 rounded-md bg-sand-200 px-3 py-2.5">
       <Facts
         items={[
           typeof total === "number" && (
             <>
               <span className="tabular-nums">{total}</span>
-              <span className="text-slate-400">
+              <span className="text-sand-500">
                 {total === 1 ? "repo" : "repos"}
               </span>
             </>
@@ -155,12 +155,12 @@ function ProfileFacts({ details }) {
           num(details.followers) && (
             <>
               <span className="tabular-nums">{num(details.followers)}</span>
-              <span className="text-slate-400">followers</span>
+              <span className="text-sand-500">followers</span>
             </>
           ),
           details.location,
           details.created && (
-            <span className="text-slate-500">
+            <span className="text-sand-500">
               joined {formatMonth(details.created)}
             </span>
           ),
@@ -176,21 +176,21 @@ function ProfileFacts({ details }) {
       )}
 
       {listed > 0 && (
-        <ul className="space-y-1 border-t border-slate-200 pt-2">
+        <ul className="space-y-1 border-t border-sand-200 pt-2">
           {details.repos.map((repo) => (
             <li
               key={repo.name}
               className="flex items-baseline justify-between gap-3 text-xs"
             >
               <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium text-slate-700">{repo.name}</span>
+                <span className="font-medium text-sand-700">{repo.name}</span>
                 {/* Descriptions are often empty — plenty of real repos have
                     none — so this must degrade to just the name. */}
                 {repo.description && (
-                  <span className="text-slate-500"> — {repo.description}</span>
+                  <span className="text-sand-500"> — {repo.description}</span>
                 )}
               </span>
-              <span className="shrink-0 text-slate-400">
+              <span className="shrink-0 text-sand-500">
                 {repo.language}
                 {repo.stars > 0 && (
                   <span className="tabular-nums"> · ★{repo.stars}</span>
@@ -199,7 +199,7 @@ function ProfileFacts({ details }) {
             </li>
           ))}
           {more && (
-            <li className="pt-0.5 text-[11px] text-slate-400">
+            <li className="pt-0.5 text-[11px] text-sand-500">
               showing {listed} of {total}
             </li>
           )}
@@ -249,13 +249,13 @@ export default function GitHubCard({ result }) {
     <CardShell>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-medium text-slate-900">{heading}</p>
+          <p className="truncate font-medium text-sand-900">{heading}</p>
           {subtitle && (
-            <p className="truncate text-xs text-slate-500">{subtitle}</p>
+            <p className="truncate text-xs text-sand-500">{subtitle}</p>
           )}
           {/* Wraps rather than truncates: at phone width truncation ate the
               date, which is the one field here the timeline depends on. */}
-          <p className="mt-0.5 text-xs text-slate-500">{meta.join(" · ")}</p>
+          <p className="mt-0.5 text-xs text-sand-500">{meta.join(" · ")}</p>
         </div>
         <div className="shrink-0">
           <CategoryBadge category={cat?.category} />
@@ -280,13 +280,13 @@ export default function GitHubCard({ result }) {
       {/* A profile's bio is the person's own words; show it above Gemini's
           summary rather than letting the summary paraphrase it away. */}
       {isProfile && details.bio && (
-        <p className="mt-2 text-sm italic leading-relaxed text-slate-500">
+        <p className="mt-2 text-sm italic leading-relaxed text-sand-500">
           {details.bio}
         </p>
       )}
 
       {cat?.summary && (
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
+        <p className="mt-2 text-sm leading-relaxed text-sand-600">
           {cat.summary}
         </p>
       )}
@@ -299,7 +299,7 @@ export default function GitHubCard({ result }) {
 
       <EntityChips cat={cat} />
 
-      <p className="mt-3 truncate text-[11px] text-slate-400" title={result.url}>
+      <p className="mt-3 truncate text-[11px] text-sand-500" title={result.url}>
         from {result.url}
       </p>
 

@@ -9,7 +9,14 @@ import {
   forceY,
 } from "d3-force";
 import { getGraph, inferCareerPaths } from "../api/client";
-import { CAREER_PATH_COLOR, categoryColor } from "../categories";
+import {
+  CAREER_PATH_COLOR,
+  categoryColor,
+  GRAPH_EDGE,
+  GRAPH_EDGE_ACTIVE,
+  GRAPH_NODE_SELECTED,
+  SURFACE_PAPER,
+} from "../categories";
 import { DEGRADED_COPY } from "./cardParts";
 import LoadDemoButton from "./LoadDemoButton";
 import NodeDetailPanel from "./NodeDetailPanel";
@@ -96,16 +103,16 @@ function GraphSkeleton() {
     [230, 260, 10], [340, 110, 7], [360, 230, 18], [70, 260, 7],
   ];
   return (
-    <div className="rounded-xl border border-slate-200 bg-white">
+    <div className="rounded-xl border border-sand-200 bg-paper">
       <svg width="100%" height={HEIGHT} viewBox="0 0 440 320" className="block">
         <g className="animate-pulse">
           {dots.map(([x, y], i) =>
             dots.slice(i + 1, i + 2).map(([x2, y2]) => (
-              <line key={`l${i}`} x1={x} y1={y} x2={x2} y2={y2} stroke="#e2e8f0" strokeWidth="1.5" />
+              <line key={`l${i}`} x1={x} y1={y} x2={x2} y2={y2} stroke={GRAPH_EDGE} strokeWidth="1.5" />
             ))
           )}
           {dots.map(([x, y, r], i) => (
-            <circle key={i} cx={x} cy={y} r={r} fill="#e2e8f0" />
+            <circle key={i} cx={x} cy={y} r={r} fill={GRAPH_EDGE} />
           ))}
         </g>
       </svg>
@@ -297,8 +304,8 @@ export default function KnowledgeGraph() {
   if (data === null) {
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
-          <Spinner className="h-4 w-4 text-slate-400" />
+        <div className="flex items-center gap-2 text-sm text-sand-500">
+          <Spinner className="h-4 w-4 text-sand-500" />
           Drawing your knowledge graph…
         </div>
         <GraphSkeleton />
@@ -314,16 +321,16 @@ export default function KnowledgeGraph() {
   }
   if (data.nodes.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-        <p className="text-sm font-medium text-slate-600">Your graph is empty</p>
-        <p className="mt-1 text-xs text-slate-400">
+      <div className="rounded-xl border border-dashed border-sand-300 bg-paper px-6 py-16 text-center">
+        <p className="text-sm font-medium text-sand-600">Your graph is empty</p>
+        <p className="mt-1 text-xs text-sand-500">
           Head to <span className="font-medium">Upload</span> to add documents —
           the graph draws their skills, similarities, and career paths as they
           connect.
         </p>
         <div className="mt-6 flex flex-col items-center gap-2">
           <LoadDemoButton onLoaded={load} />
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-sand-500">
             or load a sample profile to see the graph light up
           </p>
         </div>
@@ -346,7 +353,7 @@ export default function KnowledgeGraph() {
         <button
           onClick={() => runInference(false)}
           disabled={inferring}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-espresso-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-espresso-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {inferring && <Spinner className="h-4 w-4 text-white" />}
           {inferring
@@ -355,7 +362,7 @@ export default function KnowledgeGraph() {
             ? "Re-infer career paths"
             : "Infer career paths"}
         </button>
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-sand-500">
           Reads your whole profile with AI to suggest trajectories · costs quota
         </span>
       </div>
@@ -365,7 +372,7 @@ export default function KnowledgeGraph() {
           className={`flex flex-wrap items-center gap-2 rounded-lg border px-4 py-2 text-sm ${
             degraded.retryable
               ? "border-amber-200 bg-amber-50 text-amber-800"
-              : "border-slate-200 bg-slate-50 text-slate-600"
+              : "border-sand-200 bg-sand-200 text-sand-600"
           }`}
         >
           <span aria-hidden="true">{degraded.retryable ? "⚠" : "○"}</span>
@@ -391,7 +398,7 @@ export default function KnowledgeGraph() {
           overlay it without reflowing the simulation. */}
       <div
         ref={containerRef}
-        className="relative overflow-hidden rounded-xl border border-slate-200 bg-white"
+        className="relative overflow-hidden rounded-xl border border-sand-200 bg-paper"
       >
         <svg
           ref={svgRef}
@@ -415,7 +422,7 @@ export default function KnowledgeGraph() {
                   y1={s.y}
                   x2={t.x}
                   y2={t.y}
-                  stroke={state === "active" ? "#475569" : "#cbd5e1"}
+                  stroke={state === "active" ? GRAPH_EDGE_ACTIVE : GRAPH_EDGE}
                   strokeWidth={state === "active" ? 2 : 1.2}
                   strokeOpacity={state === "dim" ? 0.08 : state === "active" ? 0.9 : 0.5}
                   strokeDasharray={isDashed(link.relation_type) ? "4 3" : undefined}
@@ -445,7 +452,7 @@ export default function KnowledgeGraph() {
                   <circle
                     r={r}
                     fill={colorOf(node)}
-                    stroke={isSel ? "#0f172a" : "#ffffff"}
+                    stroke={isSel ? GRAPH_NODE_SELECTED : SURFACE_PAPER}
                     strokeWidth={isSel ? 2.5 : 1.5}
                   />
                   {labelVisible(node) && (
@@ -455,8 +462,8 @@ export default function KnowledgeGraph() {
                       textAnchor="middle"
                       className={`pointer-events-none ${
                         node.type === "career_path"
-                          ? "fill-slate-900 font-semibold"
-                          : "fill-slate-600"
+                          ? "fill-sand-900 font-semibold"
+                          : "fill-sand-600"
                       }`}
                       style={{ fontSize: node.type === "career_path" ? 12 : 10 }}
                     >
@@ -475,25 +482,25 @@ export default function KnowledgeGraph() {
             same coordinate space as the SVG since its pixel size matches. */}
         {hoverNode && hoverNode.id !== selectedId && (
           <div
-            className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-md bg-slate-900 px-2 py-1 text-xs text-white shadow-lg"
+            className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-md bg-sand-900 px-2 py-1 text-xs text-white shadow-lg"
             style={{ left: hoverNode.x, top: (hoverNode.y ?? 0) - radiusOf(hoverNode) - 6 }}
           >
             <span className="font-medium">{hoverNode.label}</span>
             {hoverNode.type === "document" && hoverNode.category && (
-              <span className="ml-1 text-slate-300">· {hoverNode.category}</span>
+              <span className="ml-1 text-sand-400">· {hoverNode.category}</span>
             )}
             {hoverNode.type === "document" &&
               hoverNode.date_source === "extracted" &&
               hoverNode.effective_date && (
-                <span className="ml-1 text-slate-300">· {hoverNode.effective_date}</span>
+                <span className="ml-1 text-sand-400">· {hoverNode.effective_date}</span>
               )}
             {hoverNode.type === "career_path" &&
               typeof hoverNode.match_score === "number" && (
-                <span className="ml-1 text-slate-300">
+                <span className="ml-1 text-sand-400">
                   · {Math.round(hoverNode.match_score * 100)}% match
                 </span>
               )}
-            {hoverNode.type === "skill" && <span className="ml-1 text-slate-300">· skill</span>}
+            {hoverNode.type === "skill" && <span className="ml-1 text-sand-400">· skill</span>}
           </div>
         )}
 
@@ -501,8 +508,8 @@ export default function KnowledgeGraph() {
             (nothing blanks) with a pulsing banner so the wait reads as work. */}
         {inferring && (
           <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
-            <div className="flex animate-pulse items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50/90 px-3 py-1.5 text-xs font-medium text-indigo-700 shadow-sm">
-              <Spinner className="h-3.5 w-3.5 text-indigo-500" />
+            <div className="flex animate-pulse items-center gap-2 rounded-full border border-espresso-200 bg-espresso-50/90 px-3 py-1.5 text-xs font-medium text-espresso-700 shadow-sm">
+              <Spinner className="h-3.5 w-3.5 text-espresso-500" />
               Analyzing your profile for career paths…
             </div>
           </div>
@@ -520,7 +527,7 @@ export default function KnowledgeGraph() {
 
       {/* Legend — always present, so identity is never colour-alone (categories.js
           / dataviz a11y rule). Only node kinds actually on screen are shown. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-sand-500">
         {presentCategories.map((cat) => (
           <span key={cat} className="inline-flex items-center gap-1.5">
             <span
@@ -551,10 +558,10 @@ export default function KnowledgeGraph() {
             Career path
           </span>
         )}
-        <span className="ml-auto inline-flex items-center gap-3 text-slate-400">
+        <span className="ml-auto inline-flex items-center gap-3 text-sand-500">
           <span className="inline-flex items-center gap-1.5">
             <svg width="20" height="6">
-              <line x1="0" y1="3" x2="20" y2="3" stroke="#cbd5e1" strokeWidth="1.5" />
+              <line x1="0" y1="3" x2="20" y2="3" stroke={GRAPH_EDGE} strokeWidth="1.5" />
             </svg>
             linked
           </span>
@@ -565,7 +572,7 @@ export default function KnowledgeGraph() {
                 y1="3"
                 x2="20"
                 y2="3"
-                stroke="#cbd5e1"
+                stroke={GRAPH_EDGE}
                 strokeWidth="1.5"
                 strokeDasharray="4 3"
               />
@@ -575,7 +582,7 @@ export default function KnowledgeGraph() {
         </span>
       </div>
 
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-sand-500">
         Click a node to trace its connections · drag to reposition · click empty
         space to reset
       </p>

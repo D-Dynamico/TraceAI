@@ -30,13 +30,13 @@ function PendingCard({ label }) {
     <CardShell>
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-slate-500">{label}</p>
+          <p className="truncate text-sm font-medium text-sand-500">{label}</p>
           <div className="mt-2 space-y-1.5">
-            <div className="h-2 w-2/3 animate-pulse rounded bg-slate-200" />
-            <div className="h-2 w-1/3 animate-pulse rounded bg-slate-200" />
+            <div className="h-2 w-2/3 animate-pulse rounded bg-sand-300" />
+            <div className="h-2 w-1/3 animate-pulse rounded bg-sand-300" />
           </div>
         </div>
-        <span className="shrink-0 text-xs text-slate-400">categorizing…</span>
+        <span className="shrink-0 text-xs text-sand-500">categorizing…</span>
       </div>
     </CardShell>
   );
@@ -157,8 +157,8 @@ export default function Upload() {
           busy.files ? "cursor-wait" : "cursor-pointer"
         } ${
           dragging
-            ? "border-indigo-400 bg-indigo-50"
-            : "border-slate-300 bg-white hover:border-indigo-300 hover:bg-slate-50"
+            ? "border-espresso-400 bg-espresso-50"
+            : "border-sand-300 bg-paper hover:border-espresso-300 hover:bg-sand-200"
         }`}
       >
         <input
@@ -169,8 +169,8 @@ export default function Upload() {
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
-        <p className="text-sm font-medium text-slate-700">{dropLabel}</p>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="text-sm font-medium text-sand-700">{dropLabel}</p>
+        <p className="mt-1 text-xs text-sand-500">
           PDF, DOCX, PPTX, TXT, images — categorized automatically
         </p>
       </div>
@@ -183,12 +183,12 @@ export default function Upload() {
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submitUrl()}
           placeholder="Paste a GitHub repo or portfolio URL"
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+          className="flex-1 rounded-lg border border-sand-300 px-3 py-2 text-sm outline-none focus:border-espresso-400 focus:ring-1 focus:ring-espresso-400"
         />
         <button
           onClick={submitUrl}
           disabled={busy.url || !url.trim()}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg bg-espresso-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-espresso-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy.url ? "Ingesting…" : "Ingest"}
         </button>
@@ -204,16 +204,16 @@ export default function Upload() {
           }}
           rows={3}
           placeholder="Or just type it — “Led the Data Science Club in 2024, organized 5 workshops”"
-          className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+          className="w-full resize-y rounded-lg border border-sand-300 px-3 py-2 text-sm outline-none focus:border-espresso-400 focus:ring-1 focus:ring-espresso-400"
         />
         <div className="flex items-center justify-between">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-sand-500">
             No certificate needed — club roles, hackathon wins, volunteer work.
           </p>
           <button
             onClick={submitEntry}
             disabled={busy.text || !entry.trim()}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-espresso-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-espresso-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy.text ? "Adding…" : "Add entry"}
           </button>
@@ -229,7 +229,7 @@ export default function Upload() {
       {/* Results — pending skeletons slot in at the top as each item resolves. */}
       {(pending.length > 0 || results.length > 0) && (
         <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-slate-600">
+          <h2 className="text-sm font-semibold text-sand-600">
             Ingested ({results.length})
           </h2>
           {pending.map((p) => (

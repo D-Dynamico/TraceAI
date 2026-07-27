@@ -79,12 +79,12 @@ export default function Search() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && run()}
           placeholder="Ask anything — “show my certificates”, “what did I build in 2024?”"
-          className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+          className="flex-1 rounded-lg border border-sand-300 px-4 py-2.5 text-sm outline-none focus:border-espresso-400 focus:ring-1 focus:ring-espresso-400"
         />
         <button
           onClick={() => run()}
           disabled={busy || !query.trim()}
-          className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg bg-espresso-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-espresso-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "Searching…" : "Search"}
         </button>
@@ -97,7 +97,7 @@ export default function Search() {
             <button
               key={q}
               onClick={() => run(q)}
-              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-indigo-400 hover:text-indigo-700"
+              className="rounded-full border border-sand-300 bg-paper px-3 py-1 text-xs text-sand-600 transition hover:border-espresso-400 hover:text-espresso-700"
             >
               {q}
             </button>
@@ -134,7 +134,7 @@ export default function Search() {
           {response.count > 0 && !response.answerable && !answerBusy && !answerData && (
             <button
               onClick={() => loadAnswer(response.query, response.results)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-espresso-300 bg-espresso-50 px-3 py-1.5 text-sm font-medium text-espresso-700 transition hover:bg-espresso-100"
             >
               <span aria-hidden="true">✨</span> Ask AI about these results
             </button>
@@ -146,13 +146,13 @@ export default function Search() {
               one for the other is how a user concludes the app misfiled
               something it did not. */}
           {response.fell_back && (
-            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p className="rounded-lg border border-sand-200 bg-sand-200 px-3 py-2 text-xs text-sand-600">
               No exact match for “{response.query}” — showing the closest
               documents instead.
             </p>
           )}
 
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-sand-500">
             {response.count === 0
               ? "No matches"
               : isSemantic
@@ -167,7 +167,7 @@ export default function Search() {
           ))}
 
           {response.count === 0 && (
-            <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-400">
+            <p className="rounded-lg border border-dashed border-sand-300 bg-paper px-4 py-6 text-center text-sm text-sand-500">
               Nothing matched “{response.query}”. Try a category like “certificates”
               or “projects”.
             </p>

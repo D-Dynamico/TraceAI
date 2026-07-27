@@ -1,3 +1,29 @@
+/* Fonts are bundled, not linked. @fontsource ships the woff2 files as npm
+   packages, so Vite fingerprints and serves them from our own origin — the
+   deployed app makes no request to fonts.googleapis.com and keeps its type
+   even where that CDN is blocked. Both are variable fonts: one file covers the
+   whole weight range instead of one request per weight. */
+@import "@fontsource-variable/inter-tight";
+@import "@fontsource-variable/fraunces";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    /* Set here rather than on a wrapper div so the canvas behind an
+       overscroll bounce is paper too, not the browser's white. */
+    background-color: theme("colors.parchment");
+  }
+
+  body {
+    @apply bg-parchment font-sans text-sand-700 antialiased;
+  }
+
+  /* Deliberately NO blanket h1/h2/h3 serif rule. Half this app's headings are
+     small utility labels ("Ingested (3)"), and a display serif at 14px reads as
+     a mistake next to the UI sans. `font-display` is applied at the three places
+     that are actually display type: the wordmark, a document title, and the
+     timeline's year markers. */
+}

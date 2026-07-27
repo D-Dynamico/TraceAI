@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { deleteDocument, getDocument, setCategory } from "../api/client";
-import { CATEGORY_CHOICES, categoryColor } from "../categories";
+import { CATEGORY_CHOICES, categoryColor, SURFACE_PAPER } from "../categories";
 import {
   CategoryBadge,
   Chips,
@@ -90,26 +90,26 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
       {/* Marker on the spine. Filled = real date; ring = assumed. */}
       <span
         aria-hidden="true"
-        className="absolute -left-[30px] top-1.5 h-3 w-3 rounded-full border-2 bg-white"
+        className="absolute -left-[30px] top-1.5 h-3 w-3 rounded-full border-2 bg-paper"
         style={{
           borderColor: color,
-          backgroundColor: assumed ? "#fff" : color,
+          backgroundColor: assumed ? SURFACE_PAPER : color,
         }}
       />
 
-      <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="rounded-lg border border-sand-200 bg-paper shadow-sm">
         <button
           onClick={toggle}
           className="flex w-full items-start justify-between gap-3 p-3 text-left"
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <p className="truncate font-medium text-slate-900">
+              <p className="truncate font-medium text-sand-900">
                 {doc.title || doc.filename || "Untitled"}
               </p>
               <FormatBadge fileType={doc.file_type} />
             </div>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-sand-500">
               {doc.date_source === "extracted" ? (
                 <span>{formatMonth(doc.effective_date)}</span>
               ) : (
@@ -121,7 +121,7 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
             <CategoryBadge category={category} />
             <span
               aria-hidden="true"
-              className={`text-slate-400 transition ${open ? "rotate-90" : ""}`}
+              className={`text-sand-500 transition ${open ? "rotate-90" : ""}`}
             >
               ▸
             </span>
@@ -129,9 +129,9 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
         </button>
 
         {open && (
-          <div className="border-t border-slate-100 px-3 py-3">
+          <div className="border-t border-sand-200 px-3 py-3">
             {doc.summary && (
-              <p className="text-sm leading-relaxed text-slate-600">{doc.summary}</p>
+              <p className="text-sm leading-relaxed text-sand-600">{doc.summary}</p>
             )}
             {assumed && (
               <p className="mt-2 text-xs text-amber-700">
@@ -156,17 +156,17 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
               aria-label="Category"
               className="mt-3 flex flex-wrap items-center gap-2"
             >
-              <span className="text-[11px] uppercase tracking-wide text-slate-400">
+              <span className="text-[11px] uppercase tracking-wide text-sand-500">
                 Category
               </span>
               <CategoryBadge category={category} />
               {manual && (
-                <span className="text-[11px] text-slate-400">set by you</span>
+                <span className="text-[11px] text-sand-500">set by you</span>
               )}
               {!picking && (
                 <button
                   onClick={() => setPicking(true)}
-                  className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-sand-500 transition hover:bg-sand-200 hover:text-sand-700"
                 >
                   Change
                 </button>
@@ -186,8 +186,8 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
                     aria-pressed={choice === category}
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition disabled:opacity-50 ${
                       choice === category
-                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                        : "border-slate-300 bg-white text-slate-600 hover:border-slate-400"
+                        ? "border-espresso-400 bg-espresso-50 text-espresso-700"
+                        : "border-sand-300 bg-paper text-sand-600 hover:border-sand-400"
                     }`}
                   >
                     <span
@@ -201,7 +201,7 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
                 <button
                   onClick={() => setPicking(false)}
                   disabled={Boolean(saving)}
-                  className="rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 transition hover:text-slate-700 disabled:opacity-50"
+                  className="rounded-md px-2 py-0.5 text-xs font-medium text-sand-500 transition hover:text-sand-700 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -218,13 +218,13 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
               {!confirming ? (
                 <button
                   onClick={() => setConfirming(true)}
-                  className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                  className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-sand-500 transition hover:bg-red-50 hover:text-red-600"
                 >
                   Delete
                 </button>
               ) : (
                 <span className="inline-flex items-center gap-2 text-xs">
-                  <span className="text-slate-500">Delete this?</span>
+                  <span className="text-sand-500">Delete this?</span>
                   <button
                     onClick={handleDelete}
                     disabled={deleting}
@@ -235,7 +235,7 @@ export default function TimelineEntry({ doc, onDeleted, onUpdated }) {
                   <button
                     onClick={() => setConfirming(false)}
                     disabled={deleting}
-                    className="rounded-md px-2 py-1 font-medium text-slate-500 transition hover:text-slate-700 disabled:opacity-50"
+                    className="rounded-md px-2 py-1 font-medium text-sand-500 transition hover:text-sand-700 disabled:opacity-50"
                   >
                     Cancel
                   </button>

@@ -17,8 +17,8 @@ export default function SourceRow({ result, cited = false }) {
 
   return (
     <div
-      className={`flex items-start gap-3 rounded-lg border bg-white p-3 shadow-sm ${
-        cited ? "border-indigo-300 ring-1 ring-indigo-200" : "border-slate-200"
+      className={`flex items-start gap-3 rounded-lg border bg-paper p-3 shadow-sm ${
+        cited ? "border-espresso-300 ring-1 ring-espresso-200" : "border-sand-200"
       }`}
     >
       <span
@@ -28,15 +28,15 @@ export default function SourceRow({ result, cited = false }) {
       />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate font-medium text-slate-900">{heading}</p>
+          <p className="truncate font-medium text-sand-900">{heading}</p>
           <FormatBadge fileType={result.file_type} />
           {cited && (
-            <span className="shrink-0 rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+            <span className="shrink-0 rounded-full border border-espresso-200 bg-espresso-50 px-1.5 py-0.5 text-[10px] font-medium text-espresso-700">
               cited
             </span>
           )}
         </div>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-sand-500">
           {category && <span>{category}</span>}
           {dateText && <span aria-hidden="true">·</span>}
           {dateText && <span>{dateText}</span>}
@@ -44,13 +44,13 @@ export default function SourceRow({ result, cited = false }) {
             <span className="text-amber-600">· date assumed</span>
           )}
           {typeof result.score === "number" && (
-            <span className="tabular-nums text-slate-400">
+            <span className="tabular-nums text-sand-500">
               · {Math.round(result.score * 100)}% match
             </span>
           )}
         </p>
         {result.summary && (
-          <p className="mt-1 line-clamp-2 text-sm text-slate-600">{result.summary}</p>
+          <p className="mt-1 line-clamp-2 text-sm text-sand-600">{result.summary}</p>
         )}
       </div>
       <OriginalAction

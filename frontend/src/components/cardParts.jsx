@@ -19,7 +19,7 @@ import { categoryColor, METER_FILL, METER_TRACK } from "../categories";
 export function CategoryBadge({ category }) {
   if (!category) return null;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-700">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-sand-200 bg-paper px-2.5 py-0.5 text-xs font-medium text-sand-700">
       <span
         aria-hidden="true"
         className="h-2 w-2 shrink-0 rounded-full"
@@ -64,7 +64,7 @@ export function Confidence({ value }) {
           style={{ width: `${pct}%`, backgroundColor: METER_FILL }}
         />
       </span>
-      <span className="text-xs tabular-nums text-slate-500">{pct}% confident</span>
+      <span className="text-xs tabular-nums text-sand-500">{pct}% confident</span>
     </span>
   );
 }
@@ -74,13 +74,13 @@ export function Chips({ label, items }) {
   if (!items?.length) return null;
   return (
     <div className="flex flex-wrap items-baseline gap-1.5">
-      <span className="text-[11px] uppercase tracking-wide text-slate-400">
+      <span className="text-[11px] uppercase tracking-wide text-sand-500">
         {label}
       </span>
       {items.map((item) => (
         <span
           key={item}
-          className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700"
+          className="rounded bg-sand-200 px-1.5 py-0.5 text-xs text-sand-700"
         >
           {item}
         </span>
@@ -150,7 +150,7 @@ export function DegradedNotice({ cat, onRetry, retrying }) {
   return (
     <span
       className={`inline-flex items-center gap-1 text-xs ${
-        retryable ? "text-amber-700" : "text-slate-500"
+        retryable ? "text-amber-700" : "text-sand-500"
       }`}
     >
       <span aria-hidden="true">{retryable ? "⚠" : "○"}</span>
@@ -202,11 +202,11 @@ export function ExtractedText({ text, meta }) {
   if (!text) return null;
   return (
     <details className="mt-3 group">
-      <summary className="cursor-pointer list-none text-[11px] text-slate-400 transition hover:text-slate-600">
+      <summary className="cursor-pointer list-none text-[11px] text-sand-500 transition hover:text-sand-600">
         <span className="inline-block transition group-open:rotate-90">▸</span>{" "}
         Extracted text{meta ? ` · ${meta}` : ""}
       </summary>
-      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs text-slate-700">
+      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-sand-200 p-3 text-xs text-sand-700">
         {text}
       </pre>
     </details>
@@ -263,7 +263,7 @@ export function formatLabel(fileType) {
 
 export function FormatBadge({ fileType }) {
   return (
-    <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide text-slate-500">
+    <span className="rounded border border-sand-200 bg-sand-200 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide text-sand-500">
       {formatLabel(fileType)}
     </span>
   );
@@ -277,7 +277,7 @@ export function FormatBadge({ fileType }) {
  */
 export function OriginalAction({ id, hasOriginal, sourceUrl }) {
   const cls =
-    "shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600";
+    "shrink-0 rounded-md border border-sand-300 px-2.5 py-1 text-xs font-medium text-sand-700 transition hover:border-espresso-400 hover:text-espresso-600";
   if (hasOriginal) {
     return (
       <a href={downloadUrl(id)} className={cls}>
@@ -298,7 +298,7 @@ export function OriginalAction({ id, hasOriginal, sourceUrl }) {
 /** Card shell — the border/padding every result shares. */
 export function CardShell({ children }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-sand-200 bg-paper p-4 shadow-sm">
       {children}
     </div>
   );

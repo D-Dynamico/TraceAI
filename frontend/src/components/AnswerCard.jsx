@@ -11,15 +11,18 @@
 
 import { DEGRADED_COPY } from "./cardParts";
 
-function Shell({ tone = "indigo", children }) {
+// Tones are named for the job they do, not for a hue — a name like "indigo"
+// becomes a lie the moment the palette moves, which is exactly what happened
+// when this app left the default Tailwind accent behind.
+function Shell({ tone = "accent", children }) {
   const tones = {
-    indigo: "border-indigo-200 bg-indigo-50/70",
+    accent: "border-espresso-200 bg-espresso-50/70",
     amber: "border-amber-200 bg-amber-50",
-    slate: "border-slate-200 bg-slate-50",
+    muted: "border-sand-300 bg-sand-200",
   };
   return (
     <div className={`rounded-xl border px-4 py-3 ${tones[tone]}`}>
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-sand-500">
         Answer
       </p>
       {children}
@@ -32,11 +35,11 @@ export default function AnswerCard({ loading, data, onRetry }) {
     return (
       <Shell>
         <div className="animate-pulse space-y-2">
-          <div className="h-3 w-11/12 rounded bg-indigo-200/70" />
-          <div className="h-3 w-4/5 rounded bg-indigo-200/70" />
-          <div className="h-3 w-2/3 rounded bg-indigo-200/70" />
+          <div className="h-3 w-11/12 rounded bg-espresso-200/70" />
+          <div className="h-3 w-4/5 rounded bg-espresso-200/70" />
+          <div className="h-3 w-2/3 rounded bg-espresso-200/70" />
         </div>
-        <p className="mt-2 text-xs text-slate-400">Synthesizing an answer…</p>
+        <p className="mt-2 text-xs text-sand-500">Synthesizing an answer…</p>
       </Shell>
     );
   }
@@ -48,10 +51,10 @@ export default function AnswerCard({ loading, data, onRetry }) {
   if (data.degraded_reason) {
     const retryable = Boolean(data.retryable);
     return (
-      <Shell tone={retryable ? "amber" : "slate"}>
+      <Shell tone={retryable ? "amber" : "muted"}>
         <p
           className={`flex flex-wrap items-center gap-1.5 text-sm ${
-            retryable ? "text-amber-800" : "text-slate-600"
+            retryable ? "text-amber-800" : "text-sand-600"
           }`}
         >
           <span aria-hidden="true">{retryable ? "⚠" : "○"}</span>
@@ -78,11 +81,11 @@ export default function AnswerCard({ loading, data, onRetry }) {
   const n = data.cited_doc_ids?.length || 0;
   return (
     <Shell>
-      <p className="whitespace-pre-line text-sm leading-relaxed text-slate-800">
+      <p className="whitespace-pre-line text-sm leading-relaxed text-sand-800">
         {data.answer}
       </p>
       {n > 0 && (
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-xs text-sand-500">
           Based on {n} source{n === 1 ? "" : "s"} · shown below
         </p>
       )}

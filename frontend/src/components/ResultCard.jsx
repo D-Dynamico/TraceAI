@@ -74,16 +74,16 @@ export default function ResultCard({ result }) {
     <CardShell>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-medium text-slate-900">{heading}</p>
+          <p className="truncate font-medium text-sand-900">{heading}</p>
           {/* Wraps rather than truncates: at phone width truncation ate the
               date, which is the one field here the timeline depends on. */}
-          <p className="mt-0.5 text-xs text-slate-500">{meta.join(" · ")}</p>
+          <p className="mt-0.5 text-xs text-sand-500">{meta.join(" · ")}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {isFile && (
             <a
               href={downloadUrl(result.id)}
-              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600"
+              className="rounded-md border border-sand-300 px-2.5 py-1 text-xs font-medium text-sand-700 transition hover:border-espresso-400 hover:text-espresso-600"
             >
               Download original
             </a>
@@ -108,7 +108,7 @@ export default function ResultCard({ result }) {
       )}
 
       {cat?.summary && (
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">{cat.summary}</p>
+        <p className="mt-2 text-sm leading-relaxed text-sand-600">{cat.summary}</p>
       )}
 
       <EntityChips cat={cat} />
@@ -117,14 +117,14 @@ export default function ResultCard({ result }) {
           Skipped for text entries — their "filename" is just the first line of
           the entry, so it would restate the text shown directly below. */}
       {source && cat?.title && !isText && (
-        <p className="mt-3 truncate text-[11px] text-slate-400" title={source}>
+        <p className="mt-3 truncate text-[11px] text-sand-500" title={source}>
           from {source}
         </p>
       )}
 
       {result.checksum && isFile && (
         <p
-          className="mt-1 font-mono text-[11px] text-slate-400"
+          className="mt-1 font-mono text-[11px] text-sand-500"
           title={`SHA-256: ${result.checksum}`}
         >
           sha256:{result.checksum.slice(0, 16)}… · original preserved

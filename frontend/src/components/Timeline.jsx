@@ -75,7 +75,7 @@ export default function Timeline() {
   }, [docs, filter, newestFirst]);
 
   if (docs === null) {
-    return <p className="py-12 text-center text-sm text-slate-400">Loading…</p>;
+    return <p className="py-12 text-center text-sm text-sand-500">Loading…</p>;
   }
 
   if (error && docs.length === 0) {
@@ -88,15 +88,15 @@ export default function Timeline() {
 
   if (docs.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-        <p className="text-sm font-medium text-slate-600">Your timeline is empty</p>
-        <p className="mt-1 text-xs text-slate-400">
+      <div className="rounded-xl border border-dashed border-sand-300 bg-paper px-6 py-16 text-center">
+        <p className="text-sm font-medium text-sand-600">Your timeline is empty</p>
+        <p className="mt-1 text-xs text-sand-500">
           Head to <span className="font-medium">Upload</span> to add documents,
           URLs, or achievements — they’ll appear here in order.
         </p>
         <div className="mt-6 flex flex-col items-center gap-2">
           <LoadDemoButton onLoaded={load} />
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-sand-500">
             or load a sample student journey to explore the app
           </p>
         </div>
@@ -114,8 +114,8 @@ export default function Timeline() {
             onClick={() => setFilter(cat)}
             className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
               filter === cat
-                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
-                : "border-slate-300 bg-white text-slate-600 hover:border-slate-400"
+                ? "border-espresso-400 bg-espresso-50 text-espresso-700"
+                : "border-sand-300 bg-paper text-sand-600 hover:border-sand-400"
             }`}
           >
             {cat !== "All" && (
@@ -130,17 +130,20 @@ export default function Timeline() {
         ))}
         <button
           onClick={() => setNewestFirst((v) => !v)}
-          className="ml-auto rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-400"
+          className="ml-auto rounded-md border border-sand-300 bg-paper px-3 py-1 text-xs font-medium text-sand-600 transition hover:border-sand-400"
         >
           {newestFirst ? "Newest first ↓" : "Oldest first ↑"}
         </button>
       </div>
 
       {/* The spine: a single vertical rule the year groups and dots sit on. */}
-      <div className="border-l border-slate-200 pl-2">
+      <div className="border-l border-sand-200 pl-2">
         {groups.map((group) => (
           <section key={group.year} className="mb-2">
-            <h3 className="mb-3 ml-6 text-sm font-semibold text-slate-400">
+            {/* The year is the spine's landmark, so it gets the display face
+                and tabular figures — proportional digits make a column of
+                years visibly ragged. */}
+            <h3 className="mb-3 ml-6 font-display text-base font-semibold tabular-nums text-sand-600">
               {group.year}
             </h3>
             <ol>

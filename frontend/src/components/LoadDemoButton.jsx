@@ -28,7 +28,7 @@ export default function LoadDemoButton({ onLoaded, className = "" }) {
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex items-center gap-2 rounded-lg bg-espresso-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-espresso-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {loading && (
           <svg
