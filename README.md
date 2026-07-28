@@ -20,8 +20,9 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 - ✅ Phase 7 — RAG pipeline + synthesized answer card (`/api/answer`)
 - ✅ Phase 8 — demo seed dataset + "Load Demo Profile" button
 - 🚧 **Phase 9 — UI polish + edge cases** (current): frontend test suite (vitest,
-  115 tests), document delete, explicit "Ask AI" search, the manual category
-  override done; real-document edge-case testing next
+  117 tests), document delete, explicit "Ask AI" search, the manual category
+  override, and the warm retheme + free-tier notice done; real-document
+  edge-case testing next
 - ⬜ Phase 10+ — deployment, deliverables
 
 ### Phase 1 capabilities
@@ -324,8 +325,45 @@ validator results and the two candidate orderings that failed.
     rather than a convenience, and it is why every caller degrades instead of
     failing. plan.md §11's cache/batch/queue mitigations remain unbuilt.
   - **Known cost:** a scanned upload makes two calls, so ~26s at 13s spacing.
-- **Frontend test suite.** The React app now has 115 vitest + Testing Library
+- **Frontend test suite.** The React app now has 117 vitest + Testing Library
   tests where it had none (see [Frontend](#frontend)).
+- **A warm theme, on real type.** The app left the default Tailwind indigo and
+  slate behind for warm paper surfaces (`parchment` page, `paper` card), an
+  **espresso** accent, and a warm-neutral `sand` ink scale — all defined in
+  `frontend/tailwind.config.js`. Two things make this more than a repaint:
+  - **Every step was solved to match the WCAG contrast of the step it
+    replaced**, so hue moved without changing how heavy any text or border
+    reads. The accent is deliberately *achromatic-warm*: it sits beside category
+    badges constantly, and a brown that reads as chrome can never be mistaken
+    for a category the way a chromatic accent could — the same reasoning
+    `CAREER_PATH_COLOR` already used.
+  - **The six category hues were not touched.** The palette validator was re-run
+    against each candidate warm surface before anything changed: all six pass,
+    both existing WARNs stay conditional (and their relief condition — the
+    category *name* always rendering as text beside the dot — is unchanged), and
+    nothing crosses into FAIL.
+
+  Type is **Fraunces** (display) + **Inter Tight** (UI), bundled by Vite via
+  `@fontsource-variable` rather than linked from Google's CDN, so the deployed
+  app makes no third-party request and cannot lose its type if that CDN is
+  blocked. The serif is applied to exactly three places — the wordmark, document
+  titles, and timeline years — with **no blanket `h1–h3` rule**, because half
+  this app's headings are small utility labels where a display serif at 14px
+  reads as a mistake.
+
+  One fix rode along: `text-slate-400`, the app's most-used text class (37 uses,
+  all real text), was **already below the 4.5:1 AA floor** at 2.56:1 on white and
+  would have gone to 2.38 on beige. It is now `sand-500`, 5.29:1 on paper and
+  4.71 on parchment. The cost is that it merges with the old `slate-500`, so the
+  two quietest text tiers are now one.
+- **The free tier is stated up front.** A standing `QuotaNotice` under every view
+  says the app runs on Gemini's free tier at **5 requests per minute and 20 per
+  day**, that AI features degrade rather than fail once that is spent, and that
+  loading the demo profile costs no AI calls. One honest disclosure replaced the
+  per-action warnings (the career-path button's "· costs quota"): a reviewer
+  needs the ceiling once, up front, not a reminder at every click. The numbers
+  are mutation-tested — restoring the old, wrong "1500 per day" reddens the
+  assertion — because the entire point of the box is that its figures are true.
 - **Next:** the rest of the real-document edge-case pass (an awkward PDF, a
   dead or private-IP URL, an empty entry, responsive layout).
 
@@ -526,6 +564,7 @@ pytest              # 374 tests, no network, ~1.5 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 7 more that call the real Gemini API (needs a key, ~2 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~10s)
+                    # frontend: 117 vitest tests, see Frontend below
 ```
 
 Tests run against a per-test tmp directory, so they never write to the real
@@ -621,7 +660,7 @@ into `GET /api/graph` and turns `test_graph_excludes_other_users_documents` red
 
 ```bash
 cd frontend
-npm test            # 115 tests (vitest run), jsdom, ~50s
+npm test            # 117 tests (vitest run), jsdom, ~50s
 npm run test:watch  # same, in watch mode
 ```
 
@@ -645,6 +684,7 @@ the code they cover.
 | `components/Upload.test.jsx` | File / URL / text routing and the deferred item-A **per-input independence** (files busy must not disable the URL input) |
 | `components/GitHubCard.test.jsx` | The repo vs profile shapes, the repo-list cap disclosure, and the Upload dispatch that selects this card |
 | `components/TimelineEntry.test.jsx` | The delete flow — the two-step confirm gate, notify-parent-to-refetch on success, keep-and-error on failure — and the category override (badge moves on the server's answer only, "set by you" never claimed for an AI category, Uncategorized never offered) |
+| `components/QuotaNotice.test.jsx` | The free-tier disclosure states **both measured limits** (5 RPM / 20 per day), the degrade-not-fail promise, and that the demo seed costs nothing |
 
 The `cardParts` suite also covers the rule-bearing shared primitives —
 `Confidence` (0.0 is the couldn't-classify warning, not an empty meter),
@@ -654,7 +694,9 @@ The frontend suite was validated by mutation the same way as the backend:
 flipping Timeline's undated-last comparison reddens the matching grouping test,
 and every suite added since was validated the same way (e.g. dropping the
 knowledge-graph missing-endpoint guard, suppressing the Ask AI button, or wiring
-delete past its confirm each reddens exactly the test that asserts it).
+delete past its confirm each reddens exactly the test that asserts it). The
+quota notice was checked the same way: setting its daily limit back to the old,
+wrong 1500 reddens the assertion that names both measured limits.
 
 The category override produced two more hollow assertions worth recording, both
 green until mutation found them:

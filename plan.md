@@ -26,7 +26,7 @@ The brief states this twice, so it is treated as a hard guarantee:
 
 | Layer            | Technology                                            |
 | ---------------- | ----------------------------------------------------- |
-| Frontend         | React (Vite) + Tailwind CSS                           |
+| Frontend         | React (Vite) + Tailwind CSS · Fraunces + Inter Tight   |
 | Backend          | Python (FastAPI)                                       |
 | LLM              | Google Gemini 3 Flash — free tier (**5 RPM, 20 RPD**) |
 | Embeddings       | all-MiniLM-L6-v2 (ONNX, via ChromaDB) — local         |
@@ -469,16 +469,21 @@ A silent spinner looks like file upload. A visible pipeline looks intelligent.
 | Skill | Aqua (`#1baf7a`) | Circle (smaller) |
 | Project | Green (`#008300`) | Circle |
 | Internship | Yellow (`#eda100`) | Circle |
-| Career Path | *needs a validated hue* | Larger circle, right side |
+| Career Path | Reserved warm dark (`#453f38`) — **not** a categorical hue | Larger circle, right side |
 
 > Colors are the **validated category palette** in `frontend/src/categories.js` —
 > the single source of truth shared with the timeline (Module 4), so a category
 > is the same color everywhere. The earlier Purple / Teal / Coral here predated
 > that palette and clashed with it (Projects is green, Skills is aqua), which the
-> design principle "category colors are consistent everywhere" forbids. **Career
-> Path** is the one node type with no category behind it, so it needs an added
-> hue chosen and validated the same way (the dataviz palette validator), not
-> picked by eye.
+> design principle "category colors are consistent everywhere" forbids.
+>
+> **Career Path** is the one node type with no category behind it, and it was
+> resolved by running the validator rather than by eye: **no seventh categorical
+> hue passes.** Every plausible candidate (rose, magenta, teal, orange, deep
+> purple) failed under `--pairs all` — the six categories saturate the usable hue
+> space. So it is encoded **compositely** instead: a reserved achromatic dark,
+> plus a larger node, right-side placement, and a mandatory title + match-%
+> label. Identity never rests on that color alone.
 
 **Interaction:**
 - Click a node → it and all connected nodes highlight; everything else dims to 20% opacity
@@ -526,6 +531,17 @@ reviewers know what to try without guessing.
 | Show the AI pipeline live during upload | Makes the intelligence visible, not hidden |
 | Category colors are consistent everywhere | Timeline dot, graph node, and search icon match |
 | Empty states seed the demo | "Load demo profile" button on every empty view |
+| The accent is achromatic, never a hue | It sits beside category badges constantly; a chromatic accent competes with the six for identity |
+| The free tier is disclosed once, not per click | A reviewer needs the ceiling up front; a warning on every AI button is noise |
+
+**Surfaces and type.** Warm paper (`parchment` page, `paper` card) with an
+**espresso** accent and a warm-neutral `sand` ink scale, all in
+`frontend/tailwind.config.js`. Each step was solved to match the WCAG contrast of
+the step it replaced, so the palette can move without changing how heavy anything
+reads, and the six category hues were re-validated against the new surface rather
+than assumed to still pass. Type is **Fraunces** (display: wordmark, document
+titles, timeline years) over **Inter Tight** (UI), bundled with the app rather
+than fetched from a font CDN.
 
 ---
 
@@ -626,7 +642,7 @@ TraceAI/
 | **Phase 6** | Timeline view + search UI | 2 hours | ✅ done (Views 2 & 4) |
 | **Phase 7** | RAG pipeline + smart retrieval polish | 2 hours | ✅ done (`ai/rag.py`, `/api/answer`, answer card) |
 | **Phase 8** | Sample demo dataset + seed script | 1 hour | ✅ done (`seed/seed_demo.py`, `/api/seed-demo`, "Load Demo Profile" button) |
-| **Phase 9** | UI polish, testing with real docs, edge cases — frontend test suite (vitest, 115 tests), document delete, explicit "Ask AI" search, manual category override, and a real-document search fix **done**; the rest of the edge-case pass **next** | 2 hours | ⬜ |
+| **Phase 9** | UI polish, testing with real docs, edge cases — frontend test suite (vitest, 117 tests), document delete, explicit "Ask AI" search, manual category override, a real-document search fix, and the warm retheme + free-tier notice **done**; the rest of the edge-case pass **next** | 2 hours | ⬜ |
 | **Phase 10** | Deployment (Vercel + Render) | 2 hours | ⬜ |
 | **Phase 11** | Demo video, README, architecture diagram, thought process | 2 hours | ⬜ |
 | **Total** | | **~25 hours** | |
@@ -652,6 +668,14 @@ TraceAI/
 > and fall back to semantic search on an empty filter). The same fault hid the
 > seed's own *Hackathon Winner Certificate* from "show all my certificates", a §16
 > must-work query.
+>
+> **The UI also left the default Tailwind look behind.** The indigo/slate theme
+> every Vite+Tailwind project ships with is now warm paper with an achromatic
+> espresso accent, on Fraunces + Inter Tight (see § Design Principles). The
+> category hues did **not** change — the validator was re-run against the new
+> surface first, and all six still pass. A standing notice under every view now
+> states the free tier's real ceiling (5 RPM / 20 per day) once, which replaced
+> the per-action "costs quota" warnings.
 >
 > **Still open before Phase 9 can close:** the rest of the real-document
 > edge-case pass (scanned image, awkward PDF, dead or private-IP URL, empty
