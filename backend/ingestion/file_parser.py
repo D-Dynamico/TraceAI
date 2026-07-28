@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ai import degradation
 from config import settings
 from ingestion import ocr_handler
 
@@ -47,6 +48,17 @@ class ExtractionResult:
     # local OCR and Vision alike, since both are "this was not machine text".
     used_ocr: bool = False
     warnings: list[str] = field(default_factory=list)
+    # Why the text is missing, as a reason code plus `retryable` — the same
+    # contract the four Gemini callers degrade through (`ai/degradation.py`).
+    # Until now this cause existed only as prose inside `warnings`, so a client
+    # could not tell a quota wall (wait, then retry) from a missing Tesseract
+    # binary (retrying forever will not help) without parsing a sentence.
+    # Categorization has had the structured form since deferred item B;
+    # extraction is upstream of it and had nothing.
+    #
+    # **Invariant: set exactly when the no-text warning is emitted**, so the
+    # prose and the code can never disagree about whether extraction failed.
+    degraded: degradation.Degradation | None = None
 
     def __post_init__(self) -> None:
         self.char_count = len(self.text)
@@ -96,6 +108,12 @@ def _extract_pdf(path: Path) -> ExtractionResult:
             return ExtractionResult(combined, "pdf", method, used_ocr=True, warnings=warnings)
         if not native_text:
             warnings.append(_no_text_warning(ocr))
+            return ExtractionResult(
+                native_text, "pdf", "native", used_ocr=False,
+                warnings=warnings, degraded=ocr.degraded,
+            )
+        # Some native text survived, so extraction did not fail — a short PDF is
+        # allowed to be short. No warning, and so (by the invariant) no reason.
         return ExtractionResult(native_text, "pdf", "native", used_ocr=False, warnings=warnings)
 
     return ExtractionResult(native_text, "pdf", "native", used_ocr=False, warnings=warnings)
@@ -161,7 +179,8 @@ def _extract_image(path: Path) -> ExtractionResult:
     # `method` reports the rung that won; on total failure keep "ocr" so the
     # field still says how the file was *approached*.
     return ExtractionResult(
-        ocr.text, "image", ocr.method or "ocr", used_ocr=True, warnings=warnings
+        ocr.text, "image", ocr.method or "ocr", used_ocr=True,
+        warnings=warnings, degraded=ocr.degraded if not ocr.text else None,
     )
 
 

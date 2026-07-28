@@ -364,6 +364,40 @@ validator results and the two candidate orderings that failed.
   needs the ceiling once, up front, not a reminder at every click. The numbers
   are mutation-tested — restoring the old, wrong "1500 per day" reddens the
   assertion — because the entire point of the box is that its figures are true.
+- **A failed extraction is no longer terminal** (`POST /api/documents/{id}/reextract`).
+  Extraction sits upstream of everything, so a scan that lost its Vision call to
+  the daily quota was stored with empty `raw_text` — unfindable, wearing a
+  filename guess for metadata, and beyond repair: `/recategorize`, the existing
+  retry, re-runs the *model* over that same empty text and changes nothing. The
+  only cure was delete-and-reupload, which discards the upload date and the id.
+  Rare at the 1500/day this repo once assumed; **normal at 20/day.**
+
+  The fix is the preservation guarantee paying off — the original was stored
+  byte-for-byte and is only ever read, so the pixels are still there to try
+  again. The route re-reads them and rewrites only what was derived: `raw_text`,
+  the sidecar's extraction block, and the vectors. It verifies the checksum
+  first, exactly as the download path does, rather than deriving new text from a
+  file that no longer matches its integrity record.
+
+  It is quota-aware because it exists for a quota problem: a run that recovers
+  nothing spends **no** further call (classifying an empty string buys nothing),
+  keeps the text already stored rather than overwriting it with `""`, and
+  returns 200 with *this* attempt's reason — a retry that fails is an honest
+  "not yet", not an error. A run that recovers text classifies it, because text
+  recovered into a document still labelled by filename is the state being
+  repaired. Both rules are mutation-tested: writing the empty result reddens the
+  don't-destroy-text assertion, and forcing the re-classification reddens the
+  no-wasted-call one.
+- **Extraction degradation is structured, not prose.** The reason a document has
+  no text was only ever a sentence in `warnings`, while categorization had
+  carried `degraded_reason` + `retryable` since deferred item B. Extraction now
+  reports the same contract (`ExtractionResult.degraded`, surfaced as
+  `extraction_degraded_reason` / `extraction_retryable` and persisted to the
+  row), so a client can tell a quota wall that clears itself from a missing
+  Tesseract binary that never will — which is exactly the judgment the retry
+  button above needs to make. The invariant tying the two together: the reason is
+  set **exactly** when the no-text warning is emitted, so prose and code cannot
+  disagree about whether extraction failed.
 - **Next:** the rest of the real-document edge-case pass (an awkward PDF, a
   dead or private-IP URL, an empty entry, responsive layout).
 
@@ -526,6 +560,7 @@ console, not a server error.
 | GET    | `/api/documents`                | List categorized documents; `?category=` filters        |
 | GET    | `/api/documents/{id}`           | Full detail — entities, tags, extracted text            |
 | POST   | `/api/documents/{id}/recategorize` | Re-run categorization over the preserved text (the retry path); updates the row in place. A manually overridden category is kept |
+| POST   | `/api/documents/{id}/reextract` | Re-run **extraction** over the preserved original, then re-classify what it recovers. 409 when there is no original (URL / text entry); a run that recovers nothing keeps the stored text and spends no further quota |
 | PATCH  | `/api/documents/{id}/category`  | `{ "category": "..." }` → manually override the AI's category (one of the six); marks it `manual`. User-scoped |
 | DELETE | `/api/documents/{id}`           | Delete a document from every store — SQLite, vectors, and the original + sidecar; user-scoped |
 | GET    | `/api/documents/{id}/download`  | Original file, integrity-verified                       |
@@ -560,7 +595,7 @@ API quota.
 
 ```bash
 cd backend
-pytest              # 374 tests, no network, ~1.5 min
+pytest              # 390 tests, no network, ~1.5 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 7 more that call the real Gemini API (needs a key, ~2 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~10s)
@@ -596,6 +631,7 @@ backend is wired in — which is how the torch→ONNX swap was checked.
 | `test_delete.py`         | Document deletion across SQLite, vectors, and the file/sidecar; **user-scoped isolation** |
 | `test_category_override.py` | The manual override — the taxonomy guard, relabel-only (original/text/entities untouched), the graph re-forming on read, survival of a re-categorization, **user-scoped isolation** |
 | `test_vision.py`         | Gemini Vision OCR across all four layers — the call's guards (config gate, key, inline size cap, mime conversion, the no-text sentinel, never-raises, key redaction), the local-first ladder, the warning that names the failing rung, and a scanned upload landing searchable |
+| `test_reextract.py`      | Re-extraction as repair — recovery of text a quota wall lost (re-classified, re-indexed), and the four ways it must not make things worse: never overwrite stored text with an empty result, never spend a call classifying nothing, never derive from an original that failed its checksum, and 409 rather than 404 for a document that legitimately has no original. Also the structured extraction reason (`no_text` vs a retryable `quota`) at the API and in the row |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference, and **real Vision OCR** — the only test that proves the inline-blob format and that the configured model still reads images |
 

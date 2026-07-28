@@ -73,6 +73,38 @@ class ExtractionResponse(BaseModel):
     warnings: list[str]
     text_preview: str
     categorization: CategorizationResponse
+    # Why extraction produced no text, structurally — the same reason/retryable
+    # contract `categorization` carries, one layer upstream. Named with a prefix
+    # because the two coexist on this response and mean different things: a
+    # document can extract cleanly and fail to classify, or vice versa. None
+    # whenever text was obtained.
+    extraction_degraded_reason: str | None = None
+    extraction_retryable: bool = False
+
+
+class ReExtractionResponse(BaseModel):
+    """The outcome of re-running extraction over a preserved original."""
+
+    id: str
+    filename: str
+    file_type: str
+    method: str
+    char_count: int
+    used_ocr: bool
+    # Did *this* run produce text? False is the ordinary outcome when the cause
+    # has not cleared (still no quota, still no key) — an honest "not yet",
+    # not an error, so the response is a 200 carrying the current reason.
+    recovered: bool
+    # Whether the recovered text was re-classified. False when nothing was
+    # recovered (no point) or when the text is unchanged and its existing
+    # categorization was not a degraded guess (no gain, and a Gemini call is
+    # 5% of the day).
+    recategorized: bool
+    warnings: list[str]
+    extraction_degraded_reason: str | None = None
+    extraction_retryable: bool = False
+    text_preview: str = ""
+    categorization: CategorizationResponse | None = None
 
 
 class UrlIngestRequest(BaseModel):
@@ -111,6 +143,30 @@ class TextIngestResponse(BaseModel):
 def _preview(text: str, limit: int = 800) -> str:
     text = text.strip()
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _extraction_metadata(result, size_bytes: int | None = None) -> dict:
+    """The derived-extraction block stored in `metadata_json`.
+
+    One helper so `/upload` and `/reextract` cannot drift into writing different
+    keys for the same facts — which would leave a re-extracted document's
+    metadata shaped unlike an uploaded one's, and the UI reading a key that is
+    there only sometimes.
+    """
+    meta = {
+        "method": result.method,
+        "used_ocr": result.used_ocr,
+        "char_count": result.char_count,
+        "extraction_warnings": result.warnings,
+        # Always present, including as None on success — a stale reason left
+        # behind would keep the UI offering a retry for a document that no
+        # longer needs one.
+        "extraction_degraded_reason": result.degraded.reason if result.degraded else None,
+        "extraction_retryable": bool(result.degraded and result.degraded.retryable),
+    }
+    if size_bytes is not None:
+        meta["size_bytes"] = size_bytes
+    return meta
 
 
 async def _index_document(
@@ -243,12 +299,7 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
             summary=category_result.summary,
             extracted_date=category_result.date,
             confidence=category_result.confidence,
-            metadata={
-                "method": result.method,
-                "used_ocr": result.used_ocr,
-                "size_bytes": len(contents),
-                "extraction_warnings": result.warnings,
-            },
+            metadata=_extraction_metadata(result, size_bytes=len(contents)),
             skills=category_result.skills,
             organizations=category_result.organizations,
             people=category_result.people,
@@ -285,6 +336,8 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
         warnings=warnings,
         text_preview=_preview(result.text),
         categorization=_to_response(category_result, upload_date),
+        extraction_degraded_reason=result.degraded.reason if result.degraded else None,
+        extraction_retryable=bool(result.degraded and result.degraded.retryable),
     )
 
 
@@ -334,6 +387,189 @@ async def recategorize(doc_id: str) -> CategorizationResponse:
 
     upload_date = doc.get("upload_date") or storage.now_iso()
     return _to_response(result, upload_date)
+
+
+@router.post("/documents/{doc_id}/reextract", response_model=ReExtractionResponse)
+async def reextract(doc_id: str) -> ReExtractionResponse:
+    """Re-run *extraction* over the preserved original, then re-classify.
+
+    The gap this closes: extraction failure was **terminal**. `/recategorize`
+    re-runs the model over `raw_text`, which is empty exactly when Vision hit the
+    wall — so it re-classified nothing and the only cure was delete-and-reupload,
+    losing the upload date and the document id. Rare at the 1500/day this repo
+    once assumed; **normal at 20/day**, where one scanned upload is 2 calls and
+    the daily ceiling is reached in a single sitting.
+
+    The original is what makes this possible: it was stored byte-for-byte and is
+    only ever *read*, so the pixels are still there to try again. This re-reads
+    them, and rewrites only what was derived (raw_text, the sidecar's extraction
+    block, the vectors).
+
+    Quota-aware by design, because the endpoint exists for a quota problem:
+      - a run that recovers nothing spends **zero** further calls — it does not
+        classify an empty string, it records why and returns 200;
+      - a run that recovers text classifies it (1 call), because text recovered
+        into a document still wearing a filename guess is the broken state this
+        is repairing;
+      - a run whose text is unchanged and whose categorization was not degraded
+        skips the call entirely.
+
+    409, not 404, for a document with no original: a URL or text entry exists
+    and is fine, it simply has nothing to re-extract from (`original_path` is
+    "" — see CLAUDE.md). Re-fetching a URL is a *different* operation, and not
+    this one: the stored checksum pins which snapshot was ingested, so silently
+    replacing it with today's page would break that guarantee.
+    """
+    doc = await run_in_threadpool(database.get_document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
+
+    if not doc.get("original_path"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This document has no stored original to re-extract from "
+                "(it was ingested from a URL or entered as text)."
+            ),
+        )
+
+    found = storage.find_by_id(doc_id, DEFAULT_USER)
+    if found is None:
+        raise HTTPException(
+            status_code=409,
+            detail="The original file for this document is no longer on disk.",
+        )
+    stored_path, manifest = found
+
+    # Refuse to derive anything from an original that no longer matches its
+    # checksum, exactly as the download path does. Re-extracting a corrupted
+    # file would overwrite good text with garbage and report success.
+    if not await run_in_threadpool(storage.verify_integrity, stored_path, manifest):
+        logger.error("Integrity check FAILED for %s — refusing to re-extract.", doc_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Stored file failed its integrity check; it may be corrupted.",
+        )
+
+    # Off the event loop for the same reason as /upload: a scanned document
+    # reaches Vision, which blocks on the shared rate limiter.
+    try:
+        result = await run_in_threadpool(file_parser.extract_text, stored_path)
+    except file_parser.UnsupportedFileError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Re-extraction failed for %s", stored_path)
+        raise HTTPException(status_code=422, detail=f"Extraction failed: {exc}") from exc
+
+    text = result.text.strip()
+    reason = result.degraded.reason if result.degraded else None
+    retryable = bool(result.degraded and result.degraded.retryable)
+    warnings = list(result.warnings)
+
+    if not text:
+        # Nothing recovered. Record *this* attempt's reason so the UI stops
+        # showing the stale one, and leave raw_text untouched — overwriting it
+        # with "" would destroy text a previous run had recovered.
+        await run_in_threadpool(
+            database.update_extraction,
+            doc_id,
+            raw_text=None,
+            extraction=_extraction_metadata(result),
+        )
+        return ReExtractionResponse(
+            id=doc_id,
+            filename=doc.get("filename") or manifest.filename,
+            file_type=result.file_type,
+            method=result.method,
+            char_count=result.char_count,
+            used_ocr=result.used_ocr,
+            recovered=False,
+            recategorized=False,
+            warnings=warnings,
+            extraction_degraded_reason=reason,
+            extraction_retryable=retryable,
+        )
+
+    # Text recovered. The sidecar is derived data, so it is rewritten in place —
+    # the original beside it is not touched. Its identity fields (checksum,
+    # size, filename, upload_date) are carried over from the stored manifest,
+    # never recomputed, so the integrity record still describes the upload.
+    manifest.extraction = {
+        "text": result.text,
+        "method": result.method,
+        "char_count": result.char_count,
+        "used_ocr": result.used_ocr,
+        "warnings": result.warnings,
+        "reextracted_at": storage.now_iso(),
+    }
+    try:
+        await run_in_threadpool(storage.write_manifest, manifest, stored_path)
+    except Exception:
+        # Best-effort, like indexing: SQLite is what the app reads. A stale
+        # sidecar is a weaker integrity record, not a lost document.
+        logger.exception("Sidecar rewrite failed for %s", doc_id)
+
+    previous_text = doc.get("raw_text") or ""
+    was_degraded = (doc.get("confidence") or 0.0) == 0.0
+    should_categorize = text != previous_text.strip() or was_degraded
+
+    await run_in_threadpool(
+        database.update_extraction,
+        doc_id,
+        raw_text=result.text,
+        extraction=_extraction_metadata(result),
+    )
+
+    categorization: CategorizationResponse | None = None
+    title = doc.get("title") or ""
+    if should_categorize:
+        # Never raises; a failure here still leaves the recovered text stored.
+        category_result = await run_in_threadpool(
+            categorizer.categorize, result.text, doc.get("filename") or ""
+        )
+        stored_category = await run_in_threadpool(
+            database.update_categorization,
+            doc_id,
+            document_type=category_result.document_type,
+            category=category_result.category,
+            title=category_result.title,
+            summary=category_result.summary,
+            extracted_date=category_result.date,
+            confidence=category_result.confidence,
+            skills=category_result.skills,
+            organizations=category_result.organizations,
+            people=category_result.people,
+            tags=category_result.tags,
+        )
+        # A manual override survives, so report what was stored, not what the
+        # model said — same rule as /recategorize.
+        if stored_category != category_result.category:
+            category_result = category_result.model_copy(
+                update={"category": stored_category}
+            )
+        if category_result.confidence == 0.0:
+            warnings.append("Categorization is unverified — review suggested.")
+        title = category_result.title
+        categorization = _to_response(
+            category_result, doc.get("upload_date") or storage.now_iso()
+        )
+
+    # The text changed, so the vectors are stale — re-index. Best-effort.
+    await _index_document(doc_id=doc_id, title=title, raw_text=result.text)
+
+    return ReExtractionResponse(
+        id=doc_id,
+        filename=doc.get("filename") or manifest.filename,
+        file_type=result.file_type,
+        method=result.method,
+        char_count=result.char_count,
+        used_ocr=result.used_ocr,
+        recovered=True,
+        recategorized=should_categorize,
+        warnings=warnings,
+        text_preview=_preview(result.text),
+        categorization=categorization,
+    )
 
 
 async def _categorize_and_store(

@@ -283,6 +283,65 @@ def update_categorization(
     return category
 
 
+def update_extraction(
+    doc_id: str,
+    *,
+    raw_text: str | None,
+    extraction: dict[str, Any],
+    user_id: str = "demo",
+) -> bool:
+    """Record the result of a *re-extraction*. Returns True if the row existed.
+
+    Companion to `update_categorization`, one layer upstream: that one replaces
+    what the model concluded, this one replaces the text it concludes *from*.
+    Extraction failure used to be terminal precisely because no such write
+    existed — `/recategorize` re-ran the model over a `raw_text` that was empty
+    and stayed empty, so the only cure for a Vision call lost to the daily quota
+    was deleting the document and uploading it again.
+
+    `raw_text=None` means **leave the column alone**, which is the failure path:
+    a re-extraction that recovered nothing must not overwrite whatever text is
+    already stored with an empty string. It still merges `extraction`, so the
+    reason shown to the user is this attempt's (`quota`), not the stale one from
+    the upload (`no_api_key`).
+
+    `extraction` is the derived-extraction block, built by the route's
+    `_extraction_metadata` — the same helper `/upload` writes at ingest, so a
+    re-extracted document's metadata is shaped exactly like an uploaded one's
+    and no reader meets a key that is present only sometimes.
+
+    Never touches the original, the checksum, or the categorization columns.
+    Rewriting derived text is not the forbidden in-place modification of a
+    preserved original (CLAUDE.md): the original is re-read, byte-for-byte
+    unchanged, and only what was derived from it moves.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT metadata_json FROM documents WHERE id = ? AND user_id = ?",
+            (doc_id, user_id),
+        ).fetchone()
+        if row is None:
+            return False
+
+        # Merged, not replaced: `size_bytes` and anything a future ingest path
+        # records belong to the upload, not to this re-run.
+        metadata = _parse_metadata(row["metadata_json"], doc_id)
+        metadata.update(extraction)
+
+        if raw_text is None:
+            conn.execute(
+                "UPDATE documents SET metadata_json = ? WHERE id = ? AND user_id = ?",
+                (json.dumps(metadata), doc_id, user_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE documents SET raw_text = ?, metadata_json = ?"
+                " WHERE id = ? AND user_id = ?",
+                (raw_text, json.dumps(metadata), doc_id, user_id),
+            )
+    return True
+
+
 def set_category(doc_id: str, category: str, user_id: str = "demo") -> bool:
     """Manually override a document's category. Returns True if it existed.
 
