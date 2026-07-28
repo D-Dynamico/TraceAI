@@ -62,11 +62,18 @@ CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_id);
 -- Inferred career paths
 CREATE TABLE IF NOT EXISTS career_paths (
     id TEXT PRIMARY KEY,
+    -- Scoped like documents. Without this one visitor's inferred paths appeared
+    -- in every other visitor's graph, which would have made the per-visitor
+    -- isolation a half-truth: documents separated, career-path nodes not.
+    -- Defaulted so the pre-existing rows a migration finds stay with the shared
+    -- demo dataset they were inferred for.
+    user_id TEXT NOT NULL DEFAULT 'demo',
     title TEXT,                -- e.g. "AI/ML Engineer"
     match_score REAL,          -- 0.0-1.0 confidence
     evidence TEXT,             -- supporting docs/skills
     skill_gaps TEXT            -- suggested next steps
 );
+CREATE INDEX IF NOT EXISTS idx_career_paths_user ON career_paths(user_id);
 
 -- Tags for flexible categorization
 CREATE TABLE IF NOT EXISTS tags (

@@ -14,20 +14,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import storage
 from ai import embeddings
 from db import database
+from identity import current_user
 from models.document import CATEGORIES, DocumentDetail, DocumentSummary
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
-
-DEFAULT_USER = "demo"
 
 
 class IntegrityResponse(BaseModel):
@@ -53,20 +52,36 @@ class CategoryResponse(BaseModel):
     category_source: str
 
 
-def _lookup(doc_id: str):
-    found = storage.find_by_id(doc_id, DEFAULT_USER)
+def _lookup(doc_id: str, user_id: str):
+    found = storage.find_by_id(doc_id, user_id)
     if found is None:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
     return found
+
+
+def _owned(doc_id: str, user_id: str) -> dict:
+    """Fetch a document, 404ing unless it belongs to the caller.
+
+    `database.get_document` reads by primary key alone — ids are unguessable
+    uuid4s, which was sufficient when there was one dataset. With per-visitor
+    separation it is not: a leaked or shared id would otherwise read straight
+    across. 404 rather than 403, so the response cannot confirm that an id
+    exists under another user.
+    """
+    doc = database.get_document(doc_id)
+    if doc is None or doc.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
+    return doc
 
 
 @router.get("", response_model=list[DocumentSummary])
 def list_documents(
     category: str | None = Query(default=None, description="Filter by category"),
     limit: int = Query(default=100, ge=1, le=500),
+    user_id: str = Depends(current_user),
 ) -> list[DocumentSummary]:
     """List categorized documents, newest first."""
-    rows = database.list_documents(user_id=DEFAULT_USER, category=category, limit=limit)
+    rows = database.list_documents(user_id=user_id, category=category, limit=limit)
     for row in rows:
         # Empty original_path is the fileless (url / text_entry) convention; the
         # column is NOT NULL. bool("") is False — no original to download.
@@ -75,16 +90,17 @@ def list_documents(
 
 
 @router.get("/{doc_id}", response_model=DocumentDetail)
-def get_document(doc_id: str) -> DocumentDetail:
+def get_document(
+    doc_id: str, user_id: str = Depends(current_user)
+) -> DocumentDetail:
     """Fetch one document with its entities, tags, and extracted text."""
-    row = database.get_document(doc_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
-    return DocumentDetail.model_validate(row)
+    return DocumentDetail.model_validate(_owned(doc_id, user_id))
 
 
 @router.patch("/{doc_id}/category", response_model=CategoryResponse)
-def set_category(doc_id: str, payload: CategoryRequest) -> CategoryResponse:
+def set_category(
+    doc_id: str, payload: CategoryRequest, user_id: str = Depends(current_user)
+) -> CategoryResponse:
     """Manually override a document's category (plan.md § Risk Mitigation).
 
     Categorization is a Gemini judgment against a fixed six-category taxonomy,
@@ -109,7 +125,7 @@ def set_category(doc_id: str, payload: CategoryRequest) -> CategoryResponse:
             detail=f"Category must be one of: {', '.join(sorted(CATEGORIES))}.",
         )
 
-    updated = database.set_category(doc_id, category, DEFAULT_USER)
+    updated = database.set_category(doc_id, category, user_id)
     if not updated:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
 
@@ -121,7 +137,9 @@ def set_category(doc_id: str, payload: CategoryRequest) -> CategoryResponse:
 
 
 @router.delete("/{doc_id}", response_model=DeleteResponse)
-def delete_document(doc_id: str) -> DeleteResponse:
+def delete_document(
+    doc_id: str, user_id: str = Depends(current_user)
+) -> DeleteResponse:
     """Delete a document from every store: SQLite (the row plus its entity/tag
     rows), the vector index, and — for an uploaded file — the original and its
     sidecar. Returns 404 if the document does not exist for this user.
@@ -132,7 +150,7 @@ def delete_document(doc_id: str) -> DeleteResponse:
     outlives its document — search hydrates from SQLite, so an orphan vector
     cannot surface, and the download path needs a row that no longer exists.
     """
-    existed = database.delete_document(doc_id, DEFAULT_USER)
+    existed = database.delete_document(doc_id, user_id)
     if not existed:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
 
@@ -141,7 +159,7 @@ def delete_document(doc_id: str) -> DeleteResponse:
     except Exception:
         logger.exception("Failed to delete embeddings for %s", doc_id)
     try:
-        storage.delete_original(doc_id, DEFAULT_USER)
+        storage.delete_original(doc_id, user_id)
     except Exception:
         logger.exception("Failed to delete original file for %s", doc_id)
 
@@ -149,9 +167,11 @@ def delete_document(doc_id: str) -> DeleteResponse:
 
 
 @router.get("/{doc_id}/verify", response_model=IntegrityResponse)
-def verify_document(doc_id: str) -> IntegrityResponse:
+def verify_document(
+    doc_id: str, user_id: str = Depends(current_user)
+) -> IntegrityResponse:
     """Recompute the stored file's checksum and report whether it still matches."""
-    stored_path, manifest = _lookup(doc_id)
+    stored_path, manifest = _lookup(doc_id, user_id)
     return IntegrityResponse(
         id=manifest.id,
         filename=manifest.filename,
@@ -162,9 +182,11 @@ def verify_document(doc_id: str) -> IntegrityResponse:
 
 
 @router.get("/{doc_id}/download")
-def download_document(doc_id: str) -> FileResponse:
+def download_document(
+    doc_id: str, user_id: str = Depends(current_user)
+) -> FileResponse:
     """Serve the original file unchanged, after verifying its integrity."""
-    stored_path, manifest = _lookup(doc_id)
+    stored_path, manifest = _lookup(doc_id, user_id)
 
     if not storage.verify_integrity(stored_path, manifest):
         logger.error(

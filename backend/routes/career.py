@@ -12,18 +12,17 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ai import career_path
 from db import database
+from identity import current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["career"])
-
-DEFAULT_USER = "demo"
 
 
 class CareerPathOut(BaseModel):
@@ -43,8 +42,10 @@ class CareerPathsResponse(BaseModel):
 
 
 @router.post("/career-paths", response_model=CareerPathsResponse)
-async def infer_career_paths() -> CareerPathsResponse:
-    result = await run_in_threadpool(career_path.infer, DEFAULT_USER)
+async def infer_career_paths(
+    user_id: str = Depends(current_user),
+) -> CareerPathsResponse:
+    result = await run_in_threadpool(career_path.infer, user_id)
 
     # Persist only on a clean inference. A degraded run returns no paths; writing
     # that would wipe a good previous set on a transient quota wall.
@@ -52,6 +53,7 @@ async def infer_career_paths() -> CareerPathsResponse:
         await run_in_threadpool(
             database.replace_career_paths,
             [p._asdict() for p in result.paths],
+            user_id,
         )
 
     return CareerPathsResponse(

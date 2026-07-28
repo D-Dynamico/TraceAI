@@ -15,7 +15,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -23,15 +23,13 @@ import storage
 from ai import categorizer, embeddings
 from config import settings
 from db import database
+from identity import DEFAULT_USER, current_user
 from ingestion import file_parser, text_entry, url_scraper
 from models.document import Categorization
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
-
-# No auth/multi-user yet; everything lands under a single demo user.
-DEFAULT_USER = "demo"
 
 
 class CategorizationResponse(BaseModel):
@@ -206,7 +204,9 @@ def _to_response(result: Categorization, upload_date: str) -> CategorizationResp
 
 
 @router.post("/upload", response_model=ExtractionResponse)
-async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
+async def upload_file(
+    file: UploadFile = File(...), user_id: str = Depends(current_user)
+) -> ExtractionResponse:
     filename = file.filename or "unnamed"
     if not file_parser.is_supported(filename):
         raise HTTPException(
@@ -228,7 +228,7 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
     doc_id = uuid.uuid4().hex
     try:
         stored_path, checksum = storage.save_original(
-            DEFAULT_USER, doc_id, filename, contents
+            user_id, doc_id, filename, contents
         )
     except IOError as exc:
         logger.error("Failed to store original for %s: %s", filename, exc)
@@ -286,7 +286,7 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
         await run_in_threadpool(
             database.insert_document,
             doc_id=doc_id,
-            user_id=DEFAULT_USER,
+            user_id=user_id,
             filename=filename,
             original_path=rel_path,
             file_type=result.file_type,
@@ -320,7 +320,8 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
     # Embed for semantic search. Best-effort: the row is already persisted, so a
     # failure here leaves the document searchable-later, not lost.
     await _index_document(
-        doc_id=doc_id, title=category_result.title, raw_text=result.text
+        doc_id=doc_id, title=category_result.title, raw_text=result.text,
+        user_id=user_id,
     )
 
     return ExtractionResponse(
@@ -342,7 +343,9 @@ async def upload_file(file: UploadFile = File(...)) -> ExtractionResponse:
 
 
 @router.post("/documents/{doc_id}/recategorize", response_model=CategorizationResponse)
-async def recategorize(doc_id: str) -> CategorizationResponse:
+async def recategorize(
+    doc_id: str, user_id: str = Depends(current_user)
+) -> CategorizationResponse:
     """Re-run categorization over a document's preserved text (the retry path).
 
     The UI offers this only on a *retryable* degradation (a quota wall, a
@@ -352,7 +355,7 @@ async def recategorize(doc_id: str) -> CategorizationResponse:
     returns another degraded result with its reason; the original is untouched.
     """
     doc = await run_in_threadpool(database.get_document, doc_id)
-    if doc is None:
+    if doc is None or doc.get("user_id") != user_id:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
 
     raw_text = doc.get("raw_text") or ""
@@ -383,14 +386,18 @@ async def recategorize(doc_id: str) -> CategorizationResponse:
 
     # The title is prepended to each embedded chunk, so a changed title means the
     # vectors are stale — re-index. Best-effort, as on the ingest paths.
-    await _index_document(doc_id=doc_id, title=result.title, raw_text=raw_text)
+    await _index_document(
+        doc_id=doc_id, title=result.title, raw_text=raw_text, user_id=user_id
+    )
 
     upload_date = doc.get("upload_date") or storage.now_iso()
     return _to_response(result, upload_date)
 
 
 @router.post("/documents/{doc_id}/reextract", response_model=ReExtractionResponse)
-async def reextract(doc_id: str) -> ReExtractionResponse:
+async def reextract(
+    doc_id: str, user_id: str = Depends(current_user)
+) -> ReExtractionResponse:
     """Re-run *extraction* over the preserved original, then re-classify.
 
     The gap this closes: extraction failure was **terminal**. `/recategorize`
@@ -421,7 +428,7 @@ async def reextract(doc_id: str) -> ReExtractionResponse:
     replacing it with today's page would break that guarantee.
     """
     doc = await run_in_threadpool(database.get_document, doc_id)
-    if doc is None:
+    if doc is None or doc.get("user_id") != user_id:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found.")
 
     if not doc.get("original_path"):
@@ -433,7 +440,7 @@ async def reextract(doc_id: str) -> ReExtractionResponse:
             ),
         )
 
-    found = storage.find_by_id(doc_id, DEFAULT_USER)
+    found = storage.find_by_id(doc_id, user_id)
     if found is None:
         raise HTTPException(
             status_code=409,
@@ -475,6 +482,7 @@ async def reextract(doc_id: str) -> ReExtractionResponse:
             doc_id,
             raw_text=None,
             extraction=_extraction_metadata(result),
+            user_id=user_id,
         )
         return ReExtractionResponse(
             id=doc_id,
@@ -518,6 +526,7 @@ async def reextract(doc_id: str) -> ReExtractionResponse:
         doc_id,
         raw_text=result.text,
         extraction=_extraction_metadata(result),
+        user_id=user_id,
     )
 
     categorization: CategorizationResponse | None = None
@@ -555,7 +564,9 @@ async def reextract(doc_id: str) -> ReExtractionResponse:
         )
 
     # The text changed, so the vectors are stale — re-index. Best-effort.
-    await _index_document(doc_id=doc_id, title=title, raw_text=result.text)
+    await _index_document(
+        doc_id=doc_id, title=title, raw_text=result.text, user_id=user_id
+    )
 
     return ReExtractionResponse(
         id=doc_id,
@@ -578,6 +589,7 @@ async def _categorize_and_store(
     text: str,
     filename: str,
     file_type: str,
+    user_id: str = DEFAULT_USER,
     source_url: str = "",
     metadata: dict | None = None,
     date_fallback: str | None = None,
@@ -621,7 +633,7 @@ async def _categorize_and_store(
         await run_in_threadpool(
             database.insert_document,
             doc_id=doc_id,
-            user_id=DEFAULT_USER,
+            user_id=user_id,
             filename=filename,
             original_path="",
             file_type=file_type,
@@ -651,13 +663,17 @@ async def _categorize_and_store(
 
     # Fileless documents (URL / text entry) embed the same way — they have
     # raw_text even without an original file. Best-effort, as above.
-    await _index_document(doc_id=doc_id, title=result.title, raw_text=text)
+    await _index_document(
+        doc_id=doc_id, title=result.title, raw_text=text, user_id=user_id
+    )
 
     return result, warnings, upload_date
 
 
 @router.post("/ingest-url", response_model=UrlIngestResponse)
-async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
+async def ingest_url(
+    payload: UrlIngestRequest, user_id: str = Depends(current_user)
+) -> UrlIngestResponse:
     # Scraping blocks on network I/O; keep it off the event loop.
     try:
         result = await run_in_threadpool(url_scraper.scrape_url, payload.url)
@@ -687,6 +703,7 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
         # The page title is the best filename stand-in; the URL is the fallback.
         filename=result.title or result.url,
         file_type="url",
+        user_id=user_id,
         source_url=result.url,
         metadata={
             "source_type": result.source_type,
@@ -714,7 +731,9 @@ async def ingest_url(payload: UrlIngestRequest) -> UrlIngestResponse:
 
 
 @router.post("/ingest-text", response_model=TextIngestResponse)
-async def ingest_text(payload: TextIngestRequest) -> TextIngestResponse:
+async def ingest_text(
+    payload: TextIngestRequest, user_id: str = Depends(current_user)
+) -> TextIngestResponse:
     """Ingest a written response — an achievement with no supporting document."""
     try:
         entry = text_entry.prepare(payload.text)
@@ -728,6 +747,7 @@ async def ingest_text(payload: TextIngestRequest) -> TextIngestResponse:
         text=entry.text,
         filename=filename,
         file_type="text_entry",
+        user_id=user_id,
         metadata={"char_count": entry.char_count, "entered_manually": True},
     )
 

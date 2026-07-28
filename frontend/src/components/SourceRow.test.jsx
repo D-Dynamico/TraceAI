@@ -52,10 +52,9 @@ describe("SourceRow cited state", () => {
 describe("SourceRow original action", () => {
   it("downloads a stored original", () => {
     render(<SourceRow result={baseResult({ has_original: true })} />);
-    expect(screen.getByRole("link", { name: /download original/i })).toHaveAttribute(
-      "href",
-      "/api/documents/doc1/download",
-    );
+    expect(
+      screen.getByRole("link", { name: /download original/i }).getAttribute("href"),
+    ).toMatch(/^\/api\/documents\/doc1\/download\?u=.+/);
   });
 
   it("opens the source when there is no stored file", () => {

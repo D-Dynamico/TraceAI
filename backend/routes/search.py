@@ -16,18 +16,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ai import embeddings, query_router, rag
 from db import database
+from identity import current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["search"])
 
-DEFAULT_USER = "demo"
 # Semantic search returns a focused top-k (plan.md §4 Module 5 uses k=5). A
 # filter ("show all my certificates") wants everything, capped for safety.
 DEFAULT_K = 5
@@ -95,11 +95,11 @@ def _to_result(doc: dict[str, Any], score: float | None = None) -> SearchResult:
     )
 
 
-async def _filter_search(route: query_router.Route) -> list[SearchResult]:
+async def _filter_search(route: query_router.Route, user_id: str) -> list[SearchResult]:
     """Structured, exact search over SQLite — instant, no embeddings."""
     rows = await run_in_threadpool(
         database.list_documents,
-        user_id=DEFAULT_USER,
+        user_id=user_id,
         category=route.category,
         document_type=route.document_type,
         limit=FILTER_LIMIT,
@@ -111,7 +111,7 @@ async def _filter_search(route: query_router.Route) -> list[SearchResult]:
     return [_to_result(row) for row in rows]
 
 
-async def _semantic_search(query: str, k: int) -> list[SearchResult]:
+async def _semantic_search(query: str, k: int, user_id: str) -> list[SearchResult]:
     """Vector search over Chroma, hydrated from SQLite.
 
     Chroma yields (doc_id, score); the full document is fetched from SQLite, the
@@ -119,19 +119,26 @@ async def _semantic_search(query: str, k: int) -> list[SearchResult]:
     database, not the vector store, decides what exists.
     """
     hits = await run_in_threadpool(
-        embeddings.query, query, user_id=DEFAULT_USER, k=k
+        embeddings.query, query, user_id=user_id, k=k
     )
     results: list[SearchResult] = []
     for hit in hits:
         doc = await run_in_threadpool(database.get_document, hit["doc_id"])
         if doc is None:
             continue
+        # The vector store is filtered by user, but hydration reads by id from
+        # SQLite, which is not. Re-check here so a stale or spoofed index entry
+        # cannot surface another visitor's document through the search path.
+        if doc.get("user_id") != user_id:
+            continue
         results.append(_to_result(doc, score=hit["score"]))
     return results
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(payload: SearchRequest) -> SearchResponse:
+async def search(
+    payload: SearchRequest, user_id: str = Depends(current_user)
+) -> SearchResponse:
     query = (payload.query or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="Query must not be empty.")
@@ -149,7 +156,7 @@ async def search(payload: SearchRequest) -> SearchResponse:
     fell_back = False
 
     if decision.mode == "filter":
-        results = await _filter_search(decision)
+        results = await _filter_search(decision, user_id)
         # A filter that matched nothing falls through to semantic search rather
         # than reporting an empty library. The router's word→category guess is
         # the weakest link in the chain (it predicts what the model *should*
@@ -158,11 +165,11 @@ async def search(payload: SearchRequest) -> SearchResponse:
         # Reported honestly: the response says semantic + fell_back, because
         # these hits are related rather than exact.
         if not results:
-            results = await _semantic_search(query, k)
+            results = await _semantic_search(query, k, user_id)
             if results:
                 mode, category, fell_back = "semantic", None, True
     else:
-        results = await _semantic_search(query, k)
+        results = await _semantic_search(query, k, user_id)
 
     return SearchResponse(
         query=query,
@@ -194,13 +201,22 @@ class AnswerResponse(BaseModel):
 
 
 @router.post("/answer", response_model=AnswerResponse)
-async def answer(payload: AnswerRequest) -> AnswerResponse:
+async def answer(
+    payload: AnswerRequest, user_id: str = Depends(current_user)
+) -> AnswerResponse:
     """RAG synthesis over already-retrieved sources (plan.md §4 Module 5 Path 2).
 
     Separate from /search so the sources render instantly while the Gemini call
     runs behind its own loading/degraded state. Hydrates the given ids from
     SQLite (the source of truth) in their given order and synthesizes; an id that
     no longer resolves is skipped.
+
+    **The ids come from the client, so each one is re-checked against the
+    caller's user.** This is the one endpoint that takes document ids as input
+    rather than deriving them, which would otherwise make it the easiest way to
+    read someone else's documents: post their ids and let Gemini summarize the
+    contents back. Skipped silently, exactly like an id that no longer exists —
+    the two are indistinguishable to a caller who should not know it is there.
     """
     query = (payload.query or "").strip()
     if not query:
@@ -214,7 +230,7 @@ async def answer(payload: AnswerRequest) -> AnswerResponse:
     docs: list[dict[str, Any]] = []
     for doc_id in payload.doc_ids[:MAX_K]:
         doc = await run_in_threadpool(database.get_document, doc_id)
-        if doc is not None:
+        if doc is not None and doc.get("user_id") == user_id:
             docs.append(doc)
 
     result = await run_in_threadpool(rag.synthesize, query, docs)

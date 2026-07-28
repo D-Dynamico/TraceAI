@@ -9,17 +9,16 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from graph import builder
+from identity import current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["graph"])
-
-DEFAULT_USER = "demo"
 
 
 class GraphNode(BaseModel):
@@ -56,8 +55,8 @@ class GraphResponse(BaseModel):
 
 
 @router.get("/graph", response_model=GraphResponse)
-async def get_graph() -> GraphResponse:
-    data = await run_in_threadpool(builder.build_graph, DEFAULT_USER)
+async def get_graph(user_id: str = Depends(current_user)) -> GraphResponse:
+    data = await run_in_threadpool(builder.build_graph, user_id)
     return GraphResponse(
         nodes=[GraphNode.model_validate(n) for n in data["nodes"]],
         edges=[GraphEdge.model_validate(e) for e in data["edges"]],

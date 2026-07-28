@@ -98,7 +98,11 @@ describe("request shapes", () => {
     expect(url).toBe("/api/upload");
     expect(opts.body).toBeInstanceOf(FormData);
     expect(opts.body.get("file")).toBe(file);
-    // No Content-Type header — the browser sets the multipart boundary itself.
-    expect(opts.headers).toBeUndefined();
+    // Still no Content-Type — the browser sets the multipart boundary itself,
+    // and setting it by hand produces a body the server cannot parse. The
+    // identity header rides along, so `headers` is no longer absent entirely;
+    // the rule that matters is that Content-Type is not among them.
+    expect(opts.headers["Content-Type"]).toBeUndefined();
+    expect(opts.headers["X-User-Id"]).toBeTruthy();
   });
 });

@@ -85,10 +85,9 @@ describe("ResultCard format preservation", () => {
         }}
       />,
     );
-    expect(screen.getByRole("link", { name: /download original/i })).toHaveAttribute(
-      "href",
-      "/api/documents/doc9/download",
-    );
+    expect(
+      screen.getByRole("link", { name: /download original/i }).getAttribute("href"),
+    ).toMatch(/^\/api\/documents\/doc9\/download\?u=.+/);
     expect(screen.getByText(/original preserved/i)).toBeInTheDocument();
   });
 

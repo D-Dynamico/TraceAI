@@ -19,11 +19,14 @@ intelligent knowledge repository. See [plan.md](plan.md) for the full design.
 - ✅ Phase 6 — Timeline view + search UI (Views 2 & 4)
 - ✅ Phase 7 — RAG pipeline + synthesized answer card (`/api/answer`)
 - ✅ Phase 8 — demo seed dataset + "Load Demo Profile" button
+- ✅ Phase 10 — deployed: [trace-ai-eta.vercel.app](https://trace-ai-eta.vercel.app)
+  (Vercel) + `traceai-api-flmc.onrender.com` (Render)
 - 🚧 **Phase 9 — UI polish + edge cases** (current): frontend test suite (vitest,
-  117 tests), document delete, explicit "Ask AI" search, the manual category
-  override, and the warm retheme + free-tier notice done; real-document
-  edge-case testing next
-- ⬜ Phase 10+ — deployment, deliverables
+  142 tests), document delete, explicit "Ask AI" search, the manual category
+  override, the warm retheme + free-tier notice, and the two bugs deploying
+  surfaced — the graph clipped on phones, and one shared dataset across every
+  visitor — done; real-document edge-case testing next
+- ⬜ Phase 11 — deliverables (demo video, architecture diagram, thought process)
 
 ### Phase 1 capabilities
 - Upload PDF / DOCX / PPTX / TXT / images.
@@ -325,7 +328,7 @@ validator results and the two candidate orderings that failed.
     rather than a convenience, and it is why every caller degrades instead of
     failing. plan.md §11's cache/batch/queue mitigations remain unbuilt.
   - **Known cost:** a scanned upload makes two calls, so ~26s at 13s spacing.
-- **Frontend test suite.** The React app now has 117 vitest + Testing Library
+- **Frontend test suite.** The React app now has 142 vitest + Testing Library
   tests where it had none (see [Frontend](#frontend)).
 - **A warm theme, on real type.** The app left the default Tailwind indigo and
   slate behind for warm paper surfaces (`parchment` page, `paper` card), an
@@ -398,6 +401,38 @@ validator results and the two candidate orderings that failed.
   button above needs to make. The invariant tying the two together: the reason is
   set **exactly** when the no-text warning is emitted, so prose and code cannot
   disagree about whether extraction failed.
+- **Each visitor gets their own dataset.** Found by deploying: every route
+  pinned a single `DEFAULT_USER`, so the public URL served **one shared
+  library**. The first visitor's "Load Demo Profile" click populated the app for
+  everyone arriving after — and, the part that actually matters, anything a
+  visitor uploaded was readable, downloadable, and deletable by the next one. A
+  reviewer trying it with their real résumé published it to strangers.
+
+  The storage layer had been user-scoped from the start (`list_documents`,
+  `delete_document`, `build_graph`, `embeddings.query`, `uploads/{user_id}/`);
+  what was missing was any *identity* to scope by. The frontend now mints a uuid
+  into `localStorage` and sends it on every request (`X-User-Id`), and
+  `backend/identity.py` resolves it into the `user_id` every route already knew
+  how to use.
+
+  Three things were not free:
+  - **`career_paths` had no `user_id` column at all**, so inferred paths would
+    have leaked across visitors while documents stayed private — and the
+    unscoped `DELETE` meant one visitor re-inferring wiped everyone's. Column
+    added, with an idempotent startup migration, because `CREATE TABLE IF NOT
+    EXISTS` never alters a table that already exists.
+  - **`/answer` takes document ids straight from the client**, which made it the
+    easiest read-across in the app: post someone else's ids and let Gemini
+    summarize the contents back. Each id is now re-checked against the caller.
+  - **The download link is an `<a href>`**, and a browser navigation cannot
+    carry a custom header, so the id rides as `?u=` there. The header wins when
+    both are present.
+
+  **This is separation, not authentication.** The id is client-generated and
+  sits in `localStorage`; anyone can send someone else's. It stops two reviewers
+  colliding, not a determined one — real auth is plan.md §17's stretch goal.
+  Mutation-tested: removing the id validation, either ownership check, or the
+  scoping on the career-path delete each reddens exactly the test that names it.
 - **Next:** the rest of the real-document edge-case pass (an awkward PDF, a
   dead or private-IP URL, an empty entry, responsive layout).
 
@@ -626,11 +661,11 @@ API quota.
 
 ```bash
 cd backend
-pytest              # 390 tests, no network, ~1.5 min
+pytest              # 417 tests, no network, ~1.5 min
 pytest -m network   # 9 more that make real HTTP calls (no API quota, ~7s)
 pytest -m live      # 7 more that call the real Gemini API (needs a key, ~2 min)
 pytest -m model     # 2 more that load the real embedding model (~80MB download first run, ~10s)
-                    # frontend: 117 vitest tests, see Frontend below
+                    # frontend: 142 vitest tests, see Frontend below
 ```
 
 Tests run against a per-test tmp directory, so they never write to the real
@@ -663,6 +698,7 @@ backend is wired in — which is how the torch→ONNX swap was checked.
 | `test_category_override.py` | The manual override — the taxonomy guard, relabel-only (original/text/entities untouched), the graph re-forming on read, survival of a re-categorization, **user-scoped isolation** |
 | `test_vision.py`         | Gemini Vision OCR across all four layers — the call's guards (config gate, key, inline size cap, mime conversion, the no-text sentinel, never-raises, key redaction), the local-first ladder, the warning that names the failing rung, and a scanned upload landing searchable |
 | `test_reextract.py`      | Re-extraction as repair — recovery of text a quota wall lost (re-classified, re-indexed), and the four ways it must not make things worse: never overwrite stored text with an empty result, never spend a call classifying nothing, never derive from an original that failed its checksum, and 409 rather than 404 for a document that legitimately has no original. Also the structured extraction reason (`no_text` vs a retryable `quota`) at the API and in the row |
+| `test_identity.py`       | Per-visitor isolation — documents, search, graph, RAG, career paths and the retry routes all scoped; cross-user read/download/delete/override each 404; the id allowlist rejects path traversal; the `?u=` download fallback, and the header beating it. **The only file that sends two distinct ids** — every other test runs as the fallback user and would pass with the isolation removed |
 | `test_url_network.py`    | Opt-in; real GitHub API, real redirect chain               |
 | `test_live_gemini.py`    | Opt-in; catches a retired model id or revoked key; real career-path + RAG inference, and **real Vision OCR** — the only test that proves the inline-blob format and that the configured model still reads images |
 
@@ -727,7 +763,7 @@ into `GET /api/graph` and turns `test_graph_excludes_other_users_documents` red
 
 ```bash
 cd frontend
-npm test            # 117 tests (vitest run), jsdom, ~50s
+npm test            # 142 tests (vitest run), jsdom, ~50s
 npm run test:watch  # same, in watch mode
 ```
 
@@ -752,6 +788,7 @@ the code they cover.
 | `components/GitHubCard.test.jsx` | The repo vs profile shapes, the repo-list cap disclosure, and the Upload dispatch that selects this card |
 | `components/TimelineEntry.test.jsx` | The delete flow — the two-step confirm gate, notify-parent-to-refetch on success, keep-and-error on failure — and the category override (badge moves on the server's answer only, "set by you" never claimed for an AI category, Uncategorized never offered) |
 | `components/QuotaNotice.test.jsx` | The free-tier disclosure states **both measured limits** (5 RPM / 20 per day), the degrade-not-fail promise, and that the demo seed costs nothing |
+| `api/userId.test.js`        | Per-browser identity — the id persists across calls, matches the backend's allowlist, is replaced when corrupted, survives localStorage throwing, and differs between browsers; **all 13 API calls send `X-User-Id`** (one that forgets it silently reads the shared dataset) and the download href carries `?u=` |
 
 The `cardParts` suite also covers the rule-bearing shared primitives —
 `Confidence` (0.0 is the couldn't-classify warning, not an empty meter),

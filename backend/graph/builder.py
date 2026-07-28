@@ -85,7 +85,7 @@ def build_graph(
     # documents is dropped — the supporting document may have been deleted since
     # inference ran, and a leads_to edge to nothing would dangle.
     known_ids = {d["id"] for d in rich}
-    career_nodes, career_edges = _career_nodes_edges(known_ids)
+    career_nodes, career_edges = _career_nodes_edges(known_ids, user_id)
 
     return {
         "nodes": document_nodes + skill_nodes + career_nodes,
@@ -95,10 +95,13 @@ def build_graph(
 
 def _career_nodes_edges(
     known_doc_ids: set[str],
+    user_id: str = "demo",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
-    for path in database.list_career_paths():
+    # Scoped like every other source the graph reads — otherwise this one node
+    # type would leak across visitors while documents and skills stayed private.
+    for path in database.list_career_paths(user_id):
         nodes.append(
             {
                 "id": path["id"],

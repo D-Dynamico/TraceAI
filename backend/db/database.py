@@ -62,7 +62,31 @@ def init_db() -> None:
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     with get_connection() as conn:
         conn.executescript(schema)
+        _migrate(conn)
     logger.info("Database ready at %s", settings.db_path)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive column migrations for databases created by an earlier schema.
+
+    `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a column
+    added to schema.sql never reaches a database that already has that table —
+    it appears on a fresh deploy (Render's disk is ephemeral) and is missing on
+    every developer machine, which is the worst possible split. Each step here
+    must be idempotent and safe to run on every startup.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(career_paths)")}
+    if "user_id" not in columns:
+        # Existing rows were inferred for the shared dataset, so they belong to
+        # it — the DEFAULT backfills them rather than orphaning them under an id
+        # no visitor will ever send.
+        conn.execute(
+            "ALTER TABLE career_paths ADD COLUMN user_id TEXT NOT NULL DEFAULT 'demo'"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_career_paths_user ON career_paths(user_id)"
+        )
+        logger.info("Migrated career_paths: added user_id.")
 
 
 # --- Writes ---------------------------------------------------------------
@@ -137,29 +161,32 @@ def insert_document(
             )
 
 
-def replace_career_paths(paths: list[dict[str, Any]]) -> None:
-    """Persist the inferred career paths, replacing any previous set.
+def replace_career_paths(paths: list[dict[str, Any]], user_id: str = "demo") -> None:
+    """Persist one user's inferred career paths, replacing their previous set.
 
     Inference runs over the whole profile at once, so its output *is* the
-    complete set — the table is cleared and rewritten rather than appended to,
-    which keeps a re-run from stacking stale trajectories. Supporting document
-    ids and skill gaps are stored as JSON in the existing `evidence` /
-    `skill_gaps` columns (persisted because the Gemini call that produced them
-    is not free to repeat on every graph read).
+    complete set — the user's rows are cleared and rewritten rather than
+    appended to, which keeps a re-run from stacking stale trajectories.
+    Supporting document ids and skill gaps are stored as JSON in the existing
+    `evidence` / `skill_gaps` columns (persisted because the Gemini call that
+    produced them is not free to repeat on every graph read).
 
-    Note: `career_paths` has no `user_id` column — the graph is single-user
-    today (auth is a stretch goal), so paths are global.
+    **The DELETE is scoped to `user_id`.** Unscoped, one visitor running
+    inference would wipe every other visitor's paths — the same class of bug as
+    an unscoped read, but destructive rather than merely leaky.
     """
     with get_connection() as conn:
-        conn.execute("DELETE FROM career_paths")
+        conn.execute("DELETE FROM career_paths WHERE user_id = ?", (user_id,))
         conn.executemany(
             """
-            INSERT INTO career_paths (id, title, match_score, evidence, skill_gaps)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO career_paths
+                (id, user_id, title, match_score, evidence, skill_gaps)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     p["id"],
+                    user_id,
                     p["title"],
                     p.get("match_score"),
                     json.dumps({"doc_ids": p.get("evidence_doc_ids") or []}),
@@ -170,11 +197,13 @@ def replace_career_paths(paths: list[dict[str, Any]]) -> None:
         )
 
 
-def list_career_paths() -> list[dict[str, Any]]:
-    """Read persisted career paths, with evidence ids and skill gaps parsed."""
+def list_career_paths(user_id: str = "demo") -> list[dict[str, Any]]:
+    """Read one user's career paths, with evidence ids and skill gaps parsed."""
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, title, match_score, evidence, skill_gaps FROM career_paths"
+            " WHERE user_id = ?",
+            (user_id,),
         ).fetchall()
 
     out: list[dict[str, Any]] = []

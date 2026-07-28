@@ -165,7 +165,9 @@ describe("OriginalAction", () => {
   it("downloads a stored original", () => {
     render(<OriginalAction id="doc1" hasOriginal sourceUrl={null} />);
     const link = screen.getByRole("link", { name: /download original/i });
-    expect(link).toHaveAttribute("href", "/api/documents/doc1/download");
+    // The id rides as ?u= because a plain <a href> navigation cannot carry the
+    // identity header (see client.downloadUrl).
+    expect(link.getAttribute("href")).toMatch(/^\/api\/documents\/doc1\/download\?u=.+/);
   });
 
   it("opens the live source when there is no stored file", () => {

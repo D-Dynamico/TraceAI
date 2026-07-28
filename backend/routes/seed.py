@@ -14,11 +14,12 @@ from __future__ import annotations
 import logging
 import sys
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from config import PROJECT_ROOT
+from identity import current_user
 
 # The seed package sits at the repo root, a level above backend/; make it
 # importable without depending on how uvicorn was launched.
@@ -31,8 +32,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["seed"])
 
-DEFAULT_USER = "demo"
-
 
 class SeedResponse(BaseModel):
     seeded: int
@@ -40,7 +39,9 @@ class SeedResponse(BaseModel):
 
 
 @router.post("/seed-demo", response_model=SeedResponse)
-async def seed_demo() -> SeedResponse:
-    result = await run_in_threadpool(load_demo, DEFAULT_USER)
+async def seed_demo(user_id: str = Depends(current_user)) -> SeedResponse:
+    # Seeds into the *caller's* dataset, so one reviewer loading the demo
+    # profile no longer populates the app for everyone else.
+    result = await run_in_threadpool(load_demo, user_id)
     logger.info("Seeded demo profile: %s documents", result["seeded"])
     return SeedResponse(**result)
