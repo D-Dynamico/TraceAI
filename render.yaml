@@ -42,7 +42,14 @@ services:
         sync: false
       # Browser origins allowed to call this API. The Vite dev origins are
       # always allowed in addition to these (see config.py::cors_origin_list).
+      #
+      # This is the FRONTEND's real deployed origin, and it is not guessable:
+      # Vercel took `trace-ai-eta` because `traceai` was unavailable. Getting it
+      # wrong fails in a way that looks like neither service is broken — the
+      # preflight returns 400 with no Access-Control-Allow-Origin, so the UI
+      # loads and then sits dead with CORS errors in the browser console while
+      # /api/health still reports ok. Verified against the live services.
       - key: CORS_ORIGINS
-        value: https://traceai.vercel.app
+        value: https://trace-ai-eta.vercel.app
       - key: DEBUG
         value: "false"

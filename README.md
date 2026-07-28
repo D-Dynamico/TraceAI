@@ -484,10 +484,20 @@ cd backend
 
 ## Deployment
 
-Two free services: **`traceai`** on Vercel (the frontend, and the submitted URL)
-and **`traceai-api`** on Render (FastAPI). Both are described by committed
-config — `vercel.json` and `render.yaml` — so the dashboards mostly just point
-at this repo. `vercel.json` carries no comments because JSON allows none; what
+Two free services, both live:
+
+| | service | URL |
+|---|---|---|
+| Frontend (Vercel) | `trace-ai` | **https://trace-ai-eta.vercel.app** — the submitted URL |
+| Backend (Render) | `traceai-api` | https://traceai-api-flmc.onrender.com |
+
+**Neither name came out as planned, and that matters more than it looks.** Both
+hosts append a suffix when the name you ask for is taken, so the real origins
+are not guessable from the service names — and `CORS_ORIGINS` below has to hold
+the frontend's *actual* origin, not the one the plan assumed.
+
+Both services are described by committed config — `vercel.json` and
+`render.yaml` — so the dashboards mostly just point at this repo. `vercel.json` carries no comments because JSON allows none; what
 it does is set the install/build commands and `frontend/dist` as the output. It
 adds no SPA rewrite on purpose: the app is a view switch with no router, so
 there are no client-side routes to rewrite.
@@ -502,24 +512,45 @@ there are no client-side routes to rewrite.
 3. Deploy. The first build is slow — it installs dependencies and warms the
    ~79 MB ONNX embedding model into the image so no user's first upload pays
    for the download.
-4. Check `https://traceai-api.onrender.com/api/health` returns
+4. **Note the URL Render actually assigned** — it is not necessarily
+   `traceai-api.onrender.com` (ours became `traceai-api-flmc.onrender.com`).
+   Check `<that-url>/api/health` returns
    `{"status": "ok", "ai_configured": true, ...}`. `ai_configured: false` means
    the key did not reach the service.
 
 **Vercel — `traceai`:**
 
 1. **New Project**, import this repo. Vercel reads `vercel.json`.
-2. Set **`VITE_API_URL`** to the Render origin, no trailing slash
-   (`https://traceai-api.onrender.com`). Vite inlines it at **build** time, so
-   it must be set *before* the build — changing it later needs a redeploy, not
-   a restart.
+2. Set **`VITE_API_URL`** to the Render origin from step 4 above, no trailing
+   slash (`https://traceai-api-flmc.onrender.com`). It is the **only**
+   environment variable the frontend needs — and the Gemini key must never be
+   among them: anything `VITE_`-prefixed is inlined into the JavaScript bundle
+   and served to every visitor. Vite inlines at **build** time, so this must be
+   set *before* the first build; changing it later needs a redeploy, not a
+   restart.
 3. Deploy, open the site, confirm the timeline loads and "Load Demo Profile"
    populates it.
 
-If the frontend lands on any origin other than `https://traceai.vercel.app`,
-update **`CORS_ORIGINS`** on the Render service to match or the browser will
-block every API call. The failure looks like a dead UI with CORS errors in the
-console, not a server error.
+**Then reconcile `CORS_ORIGINS` on Render with the origin Vercel actually
+assigned.** This is the step that bit us: the frontend landed on
+`https://trace-ai-eta.vercel.app`, not the `https://traceai.vercel.app` the
+blueprint assumed, so every API call was blocked. It presents as a UI that
+loads and then does nothing — "failed to load demo" — with CORS errors in the
+browser console, while `/api/health` still returns `ok` and both dashboards
+show a green deploy. Nothing looks broken from either end.
+
+The check that identifies it in one shot, without a browser: send a preflight
+and see whether the header comes back at all.
+
+```bash
+curl -si -X OPTIONS https://traceai-api-flmc.onrender.com/api/seed-demo \
+  -H "Origin: https://trace-ai-eta.vercel.app" \
+  -H "Access-Control-Request-Method: POST" | grep -i access-control-allow-origin
+```
+
+An allowed origin echoes back in `Access-Control-Allow-Origin`; a rejected one
+returns 400 with the header absent. Preview deploys get their own `*.vercel.app`
+origins and are blocked the same way until added.
 
 ### Free-tier constraints — know these before demoing
 
