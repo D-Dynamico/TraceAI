@@ -56,9 +56,7 @@ search result links back to a download of the untouched file.
 
 ## The constraint that shaped everything
 
-Gemini's free tier is **5 requests per minute and 20 per day.** Not the "10 RPM / 1500 RPD"
-this project assumed for weeks — the real numbers came out of a live 429 payload, because
-Google no longer publishes per-model free-tier limits.
+Gemini's free tier is **5 requests per minute and 20 per day.**
 
 Twenty calls a day is not a footnote; it is the binding constraint on the whole design:
 
