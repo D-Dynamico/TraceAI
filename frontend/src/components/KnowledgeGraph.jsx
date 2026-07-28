@@ -36,6 +36,16 @@ import NodeDetailPanel from "./NodeDetailPanel";
 
 const HEIGHT = 560;
 
+// Below this the surface is a phone, where a 560px-tall box is most of the
+// viewport before the legend and the hint line are even reached.
+const NARROW_WIDTH = 640;
+const HEIGHT_NARROW = 420;
+
+// Exported so the breakpoint is assertable without rendering a d3 simulation.
+export function heightFor(width) {
+  return width > 0 && width < NARROW_WIDTH ? HEIGHT_NARROW : HEIGHT;
+}
+
 // Node radii by kind. Career Path is deliberately the largest — half of its
 // composite encoding (categories.js) — and skills the smallest so the document
 // hubs read as the primary objects.
@@ -130,7 +140,13 @@ export default function KnowledgeGraph() {
   const [inferring, setInferring] = useState(false);
   const [degraded, setDegraded] = useState(null); // {reason, retryable}
 
-  const containerRef = useRef(null);
+  // A callback ref, not useRef: the graph surface does not exist during the
+  // loading state (this component early-returns a skeleton), so an effect that
+  // measured `ref.current` on mount measured null and — with [] deps — never ran
+  // again. `width` stayed at its default and the SVG was rendered wider than the
+  // phone it was on, clipped by the container's overflow-hidden. State makes the
+  // element's arrival re-trigger the measurement.
+  const [container, setContainer] = useState(null);
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const nodesRef = useRef([]);
@@ -153,14 +169,31 @@ export default function KnowledgeGraph() {
   }, []);
 
   // Measure the container so the simulation is centred in the real width.
+  //
+  // A ResizeObserver rather than only a window resize listener: the surface also
+  // changes width without the window doing so — the sidebar, a scrollbar
+  // appearing, or simply this element mounting after the fetch resolves. The
+  // window listener stays as a fallback for environments without the observer.
   useLayoutEffect(() => {
+    if (!container) return undefined;
     function measure() {
-      if (containerRef.current) setWidth(containerRef.current.clientWidth);
+      // Guard 0: a hidden container reports zero, which would collapse the
+      // clamp below to a single point and stack every node on top of itself.
+      const next = container.clientWidth;
+      if (next > 0) setWidth(next);
     }
     measure();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(container);
+      return () => observer.disconnect();
+    }
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, []);
+  }, [container]);
+
+  const height = heightFor(width);
 
   const model = useMemo(() => (data ? buildModel(data) : null), [data]);
 
@@ -183,8 +216,9 @@ export default function KnowledgeGraph() {
         const rx = radiusOf(n) + (n.type === "career_path" ? 72 : PAD);
         const ry = radiusOf(n) + PAD;
         const maxX = Math.max(rx, width - rx);
+        const maxY = Math.max(ry, height - ry);
         n.x = Math.max(rx, Math.min(maxX, n.x ?? width / 2));
-        n.y = Math.max(ry, Math.min(HEIGHT - ry, n.y ?? HEIGHT / 2));
+        n.y = Math.max(ry, Math.min(maxY, n.y ?? height / 2));
       }
     }
 
@@ -197,7 +231,7 @@ export default function KnowledgeGraph() {
           .strength(0.5)
       )
       .force("charge", forceManyBody().strength(-300))
-      .force("center", forceCenter(width / 2, HEIGHT / 2))
+      .force("center", forceCenter(width / 2, height / 2))
       .force("collide", forceCollide((d) => radiusOf(d) + 14))
       .force(
         "x",
@@ -205,7 +239,7 @@ export default function KnowledgeGraph() {
           (d) => (d.type === "career_path" ? 0.3 : 0.02)
         )
       )
-      .force("y", forceY(HEIGHT / 2).strength(0.04))
+      .force("y", forceY(height / 2).strength(0.04))
       .on("tick", () => {
         clampToBounds();
         tick();
@@ -214,7 +248,7 @@ export default function KnowledgeGraph() {
     simRef.current = sim;
     return () => sim.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model, width]);
+  }, [model, width, height]);
 
   // Map a pointer event to simulation coordinates (the SVG viewBox is 0 0 w h,
   // and its pixel size matches, so the ratio handles any layout scaling).
@@ -222,7 +256,7 @@ export default function KnowledgeGraph() {
     const rect = svgRef.current.getBoundingClientRect();
     return {
       x: ((evt.clientX - rect.left) / rect.width) * width,
-      y: ((evt.clientY - rect.top) / rect.height) * HEIGHT,
+      y: ((evt.clientY - rect.top) / rect.height) * height,
     };
   }
 
@@ -397,14 +431,22 @@ export default function KnowledgeGraph() {
       {/* The graph surface. Relative so the detail panel and hover tooltip can
           overlay it without reflowing the simulation. */}
       <div
-        ref={containerRef}
+        ref={setContainer}
         className="relative overflow-hidden rounded-xl border border-sand-200 bg-paper"
       >
+        {/* width="100%" rather than the measured pixel count: with the viewBox
+            carrying the coordinate space, the surface can never be drawn wider
+            than its container. Even if a measurement were missed, the graph
+            scales to fit instead of being clipped — which is the failure this
+            had on phones, where the whole simulation ran in a field wider than
+            the screen. `toSim` reads the real rendered rect, so dragging stays
+            accurate under any scaling. */}
         <svg
           ref={svgRef}
-          width={width}
-          height={HEIGHT}
-          viewBox={`0 0 ${width} ${HEIGHT}`}
+          width="100%"
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="xMidYMid meet"
           className="block touch-none select-none"
           onClick={() => setSelectedId(null)}
         >

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
-import {
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import KnowledgeGraph, {
   buildModel,
   colorOf,
   edgeId,
+  heightFor,
   isDashed,
   radiusOf,
 } from "./KnowledgeGraph";
@@ -176,5 +178,73 @@ describe("edgeId", () => {
     // place; edgeId must yield the same stable React key before and after.
     expect(edgeId({ source: "a", target: "b" })).toBe("a->b");
     expect(edgeId({ source: { id: "a" }, target: { id: "b" } })).toBe("a->b");
+  });
+});
+
+describe("heightFor", () => {
+  it("shortens the surface on a phone-width container", () => {
+    // 560px of graph is most of a phone viewport before the legend and the
+    // interaction hint below it are even reached.
+    expect(heightFor(390)).toBeLessThan(heightFor(1200));
+  });
+
+  it("keeps the full height on a desktop container", () => {
+    expect(heightFor(1200)).toBe(560);
+    expect(heightFor(640)).toBe(560); // the breakpoint itself is not narrow
+  });
+
+  it("treats an unmeasured width as desktop, never as zero-height", () => {
+    // clientWidth reads 0 for a hidden container. Returning a narrow height for
+    // that would be acting on a measurement that never happened.
+    expect(heightFor(0)).toBe(560);
+  });
+});
+
+describe("<KnowledgeGraph /> sizing", () => {
+  // The regression these guard: the graph surface only exists *after* the fetch
+  // resolves, because the component early-returns a skeleton while loading. The
+  // width measurement used to run once on mount against a ref that was still
+  // null, never re-run, and leave the SVG at its 720px default — clipped by the
+  // container's overflow-hidden on any phone. Only ~a quarter of the graph was
+  // reachable, and only on narrow screens, so every desktop check passed.
+  function stubGraphFetch() {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          { id: "doc_a", type: "document", category: "Projects", label: "ML Pipeline" },
+          { id: "skill_py", type: "skill", label: "Python" },
+        ],
+        edges: [{ source: "doc_a", target: "skill_py", relation_type: "skill_used_in" }],
+      }),
+    });
+  }
+
+  it("never gives the surface a fixed pixel width", async () => {
+    stubGraphFetch();
+    const { container } = render(<KnowledgeGraph />);
+
+    await waitFor(() => expect(container.querySelector("svg[viewBox]")).toBeTruthy());
+    // The last svg is the graph surface (the legend renders tiny line swatches).
+    const surface = container.querySelector("svg.touch-none");
+
+    expect(surface).toBeTruthy();
+    expect(surface.getAttribute("width")).toBe("100%");
+  });
+
+  it("measures the container once it exists, rather than only on mount", async () => {
+    // The container mounts *after* the fetch resolves. If the measurement does
+    // not re-run at that point, the viewBox keeps the default width and the
+    // simulation lays out in a field wider than the screen.
+    stubGraphFetch();
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+
+    const { container } = render(<KnowledgeGraph />);
+
+    await waitFor(() => expect(container.querySelector("svg.touch-none")).toBeTruthy());
+    await waitFor(() => {
+      const viewBox = container.querySelector("svg.touch-none").getAttribute("viewBox");
+      expect(viewBox).toBe(`0 0 390 ${heightFor(390)}`);
+    });
   });
 });
