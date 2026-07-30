@@ -67,6 +67,15 @@ These have each cost real time. Read before running anything.
 - `ai/vision.py::extract_text()` **must never raise** either, for the same
   reason — extraction is upstream of everything, so a Gemini hiccup there would
   lose the upload outright rather than degrade it.
+- **Local embedding is free but not fast, and the deploy target has ~1/40th the
+  CPU of this machine.** `embed_texts` therefore consults `ai/precomputed.py`
+  first — shipped vectors for the demo profile's texts, whose content is a module
+  constant. It covers both call sites: `add_document`'s chunk windows *and* the
+  whole-`raw_text` queries `graph/builder.py` makes on every graph read. Keys are
+  the SHA-256 of the exact string, so a stale table degrades to slow, never to
+  wrong. **Edit `seed_demo.DOCS` or the chunking constants → rerun
+  `python -m seed.precompute_vectors`** (`test_precomputed.py` fails if you
+  don't). Never precompute anything whose text is not a constant.
 - **OCR is local-first and must stay that way.** `ocr_handler` tries Tesseract
   before Gemini Vision because local OCR is free and cannot exhaust a quota;
   the paid rung runs only when the free one produced nothing. Reordering these

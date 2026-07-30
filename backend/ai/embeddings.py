@@ -30,6 +30,13 @@ The semantic half of search. Three things this module takes seriously:
 Every embedding flows through `embed_texts`; every write is keyed so that a
 re-add replaces rather than duplicates. Failure to embed never loses a document —
 the caller degrades and the document simply stays unindexed until the next sync.
+
+That single choke point is also where `ai/precomputed.py` intercepts: texts whose
+vectors ship with the repo (the demo profile's, which are constants) skip the
+model entirely. Read that module before touching `embed_texts` — inference is
+~40x slower on the free instance than locally, and the demo depends on avoiding
+it. Nothing else is cached, and correctness does not depend on the table
+existing.
 """
 
 from __future__ import annotations
@@ -37,8 +44,9 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
-from typing import Any
+from typing import Any, cast
 
+from ai import precomputed
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -108,17 +116,30 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     L2-normalized (the ONNX embedder normalizes internally) so cosine distance in
     Chroma matches plan.md §4's cosine similarity.
 
-    Batched at EMBED_BATCH to bound peak memory; see that constant.
+    Texts with a shipped vector (`ai/precomputed.py` — the demo profile, whose
+    text is fixed) are served from that table and never reach the model. Only the
+    misses are embedded, so `_get_model()` is not called at all when every text
+    hits: a demo-only session on the free instance never loads the model. Results
+    are identical either way, so callers cannot tell which path a vector took.
+
+    Misses are batched at EMBED_BATCH to bound peak memory; see that constant.
     """
     if not texts:
         return []
-    model = _get_model()
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), EMBED_BATCH):
-        for v in model(texts[start : start + EMBED_BATCH]):
-            # float32 ndarray from onnxruntime -> plain floats for Chroma/JSON.
-            vectors.append(v.tolist())
-    return vectors
+
+    table = precomputed.vectors_for(MODEL_NAME)
+    vectors: list[list[float] | None] = [table.get(precomputed.key(t)) for t in texts]
+    pending = [i for i, v in enumerate(vectors) if v is None]
+
+    if pending:
+        model = _get_model()
+        for start in range(0, len(pending), EMBED_BATCH):
+            batch = pending[start : start + EMBED_BATCH]
+            for i, v in zip(batch, model([texts[i] for i in batch])):
+                # float32 ndarray from onnxruntime -> plain floats for Chroma/JSON.
+                vectors[i] = v.tolist()
+
+    return cast("list[list[float]]", vectors)
 
 
 # --- Chunking -------------------------------------------------------------

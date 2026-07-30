@@ -299,6 +299,11 @@ sentence-transformers — same weights, verified to produce identical vectors, b
 512 MB deploy target. If you reintroduce `sentence-transformers`, the service
 will OOM; re-measure before changing anything under `ai/embeddings.py`.
 
+Free and unmetered is not the same as cheap. Inference is ~40x slower on the
+deploy target than on the dev machine, which is why `embed_texts` first consults
+`ai/precomputed.py` — a shipped table of vectors for the one corpus whose text is
+fixed, the demo profile. See §10.
+
 **SQLite is the source of truth; Chroma is rebuildable.** The store syncs to
 SQLite on startup, fills a partial index incrementally, and a deleted or corrupt
 `data/chroma/` is fully rebuilt from `raw_text` — which was preserved intact for
@@ -457,9 +462,37 @@ and empty graph that populates a realistic 10-document journey (2023 Python
 certificate → 2026 resume and portfolio).
 
 It inserts directly through `database.insert_document` + `embeddings.add_document`
-with **no Gemini call** — categories and skills are hand-authored — so it is fast
-and costs no quota. Given 20 calls/day, that is what makes it load-bearing for
-any live demo.
+with **no Gemini call** — categories and skills are hand-authored — so it costs
+no quota. Given 20 calls/day, that is what makes it load-bearing for any live
+demo.
+
+### Costing no quota did not make it fast
+
+"No API call" was mistaken for "quick". The click was measured at **~92 seconds
+on the deployed instance** — 55s for `POST /api/seed-demo` and another 37s for
+the `GET /api/graph` refetch behind it — against 1.6s for the same work locally.
+Nothing was waiting on the network: it was all CPU. Render free gives an instance
+a 0.1 CPU share, and chromadb's tokenizer pads every input to a fixed 256 tokens
+(`enable_padding(length=256)`), so each embedding is a flat forward pass with
+nothing to shave. 27 of them cost 1.2s here and ~50s there.
+
+Two call sites, and missing either one leaves the click slow:
+`add_document` embeds each chunk window, and — less obviously — `build_graph`
+passes every document's whole `raw_text` to `embeddings.query` for similarity
+edges, on **every** graph read rather than just after seeding.
+
+The demo's text is a module constant, so its vectors are knowable ahead of time.
+`ai/precomputed.py` ships them and `embed_texts` serves them from a dict, which
+takes the click to ~2s and means a demo-only session never loads the model at
+all. Real uploads and search queries are unknowable and still embed live, as they
+must.
+
+Committing derived data is only safe because the keys are the SHA-256 of the
+exact string: edit a demo document or retune `CHUNK_CHARS` and the affected
+entries simply stop matching, falling through to the real model. **A stale table
+is slow, never wrong.** Regenerate with `python -m seed.precompute_vectors`;
+`test_precomputed.py` fails offline if you forget, and its `model`-marked test
+catches the table drifting from the model itself.
 
 Tuned so the graph is impressive: skills are authored so a **Python skill hub**
 wires the cert → project → internship → resume chain, and every document is

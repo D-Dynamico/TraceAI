@@ -194,19 +194,22 @@ TraceAI/
 │   │   ├── career_path.py       #   trajectory inference (Layer C)
 │   │   ├── rag.py               #   grounded answer synthesis
 │   │   ├── embeddings.py        #   MiniLM via ONNX + ChromaDB
+│   │   ├── precomputed.py       #   shipped vectors for the demo — skips the model entirely
 │   │   ├── query_router.py      #   deterministic filter-vs-semantic routing
 │   │   ├── relationship_engine.py  # entity + similarity edges (Layers A/B)
 │   │   └── degradation.py       #   the reason/retryable contract every caller shares
 │   ├── db/database.py           # SQLite; the single place the date fallback is applied
 │   ├── graph/builder.py         # the graph, assembled on read
 │   ├── routes/                  # upload · documents · search · graph · career · seed
-│   └── tests/                   # 25 files, 417 offline tests
+│   └── tests/                   # 26 files, 430 offline tests
 ├── frontend/src/
 │   ├── App.jsx                  # four views, one nav, no router
 │   ├── categories.js            # the validated category palette — one source of truth
 │   ├── api/                     # client.js + userId.js (per-browser identity)
 │   └── components/              # Timeline · Search · Upload · KnowledgeGraph · cards
-├── seed/seed_demo.py            # the ten-document demo profile — no Gemini call
+├── seed/
+│   ├── seed_demo.py             # the ten-document demo profile — no Gemini call
+│   └── precompute_vectors.py    # regenerates its shipped embeddings — no model call either
 └── docs/                        # architecture diagrams + engineering notes
 ```
 
