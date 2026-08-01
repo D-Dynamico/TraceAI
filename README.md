@@ -235,9 +235,6 @@ by default) and
 **validated by mutation** — break the guard, confirm the right test fails, restore. Two of
 the first eight were hollow and looked fine in a green run; that is why the rule exists.
 
-Remaining: the demo video and the thought-process sheet, plus the last of the
-real-document edge-case pass.
-
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
