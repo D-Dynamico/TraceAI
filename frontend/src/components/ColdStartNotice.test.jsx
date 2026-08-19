@@ -18,7 +18,7 @@ describe("ColdStartNotice", () => {
     vi.useFakeTimers();
     render(<ColdStartNotice />);
     act(() => vi.advanceTimersByTime(COLD_START_AFTER_MS));
-    expect(screen.getByRole("status")).toHaveTextContent(/waking the server/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/starting up/i);
   });
 
   it("cancels its timer on unmount", () => {

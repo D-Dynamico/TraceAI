@@ -109,13 +109,13 @@ export default function Timeline() {
     return (
       <div className="rounded-xl border border-dashed border-sand-300 bg-paper px-6 py-16 text-center">
         <p className="text-sm font-medium text-sand-600">
-          {waking ? "Waking the server…" : "Your timeline is empty"}
+          {waking ? "Starting up…" : "Your timeline is empty"}
         </p>
         <p className="mt-1 text-xs text-sand-500">
           {waking ? (
             <>
-              It sleeps when idle, so the first load of a visit takes a moment.
-              Start the demo now and it’ll run as soon as the server is up.
+              The first load can take a minute. You can start the demo now — it
+              will run as soon as we’re ready.
             </>
           ) : (
             <>

@@ -128,7 +128,7 @@ describe("Timeline cold start", () => {
       screen.getByRole("button", { name: /load demo profile/i }),
     ).toBeInTheDocument();
     // Never claims the timeline is empty — the request has not answered yet.
-    expect(screen.getByText(/waking the server/i)).toBeInTheDocument();
+    expect(screen.getByText(/starting up/i)).toBeInTheDocument();
     expect(screen.queryByText(/your timeline is empty/i)).toBeNull();
   });
 

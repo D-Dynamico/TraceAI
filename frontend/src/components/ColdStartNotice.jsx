@@ -37,8 +37,7 @@ export default function ColdStartNotice({ afterMs = COLD_START_AFTER_MS }) {
       role="status"
       className="mx-auto max-w-sm text-center text-xs leading-relaxed text-sand-500"
     >
-      Waking the server — it sleeps when idle, so the first request of a visit
-      can take up to a minute. It isn’t stuck.
+      Starting up — the first load can take a minute. Thanks for waiting.
     </p>
   );
 }
