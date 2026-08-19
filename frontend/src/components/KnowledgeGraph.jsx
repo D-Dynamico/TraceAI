@@ -18,6 +18,7 @@ import {
   SURFACE_PAPER,
 } from "../categories";
 import { DEGRADED_COPY } from "./cardParts";
+import ColdStartNotice from "./ColdStartNotice";
 import LoadDemoButton from "./LoadDemoButton";
 import NodeDetailPanel from "./NodeDetailPanel";
 
@@ -342,6 +343,7 @@ export default function KnowledgeGraph() {
           <Spinner className="h-4 w-4 text-sand-500" />
           Drawing your knowledge graph…
         </div>
+        <ColdStartNotice />
         <GraphSkeleton />
       </div>
     );

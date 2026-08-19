@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Timeline from "./Timeline";
+import { COLD_START_AFTER_MS } from "./ColdStartNotice";
 import * as client from "../api/client";
 
 // Timeline sorts on effective_date only and groups by year, with unknown dates
@@ -105,5 +106,63 @@ describe("Timeline empty state", () => {
 
     await waitFor(() => expect(screen.queryByText("proj")).toBeNull());
     expect(screen.getByText("cert")).toBeInTheDocument();
+  });
+});
+
+// A cold start on the free instance can hold the first list request for tens of
+// seconds. The timeline hands over the Load Demo CTA once the wait is clearly
+// abnormal rather than making the user watch "Loading…" for it.
+describe("Timeline cold start", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("shows Load Demo while the first request is still in flight", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(client, "listDocuments").mockReturnValue(new Promise(() => {}));
+
+    render(<Timeline />);
+    expect(screen.queryByRole("button", { name: /load demo profile/i })).toBeNull();
+
+    act(() => vi.advanceTimersByTime(COLD_START_AFTER_MS));
+
+    expect(
+      screen.getByRole("button", { name: /load demo profile/i }),
+    ).toBeInTheDocument();
+    // Never claims the timeline is empty — the request has not answered yet.
+    expect(screen.getByText(/waking the server/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your timeline is empty/i)).toBeNull();
+  });
+
+  it("does not flash the CTA for a fast response", async () => {
+    vi.spyOn(client, "listDocuments").mockResolvedValue([
+      doc("a", { effective_date: "2023-05" }),
+    ]);
+
+    render(<Timeline />);
+    expect(screen.queryByRole("button", { name: /load demo profile/i })).toBeNull();
+    await screen.findByText("a");
+  });
+
+  it("ignores a stale list response that lands after a seed", async () => {
+    // The cold-start list request resolves empty *after* the seed's refetch —
+    // without the request-id guard it would blank the freshly seeded timeline.
+    let resolveFirst;
+    vi.spyOn(client, "listDocuments")
+      .mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
+      .mockResolvedValue([doc("seeded", { effective_date: "2024-01" })]);
+    vi.spyOn(client, "seedDemo").mockResolvedValue({ created: 10 });
+
+    vi.useFakeTimers();
+    render(<Timeline />);
+    // Fake timers only to skip the cold-start delay; userEvent below wants real
+    // ones back.
+    act(() => vi.advanceTimersByTime(COLD_START_AFTER_MS));
+    vi.useRealTimers();
+
+    await userEvent.click(screen.getByRole("button", { name: /load demo profile/i }));
+    await screen.findByText("seeded");
+
+    resolveFirst([]);
+    await waitFor(() => expect(screen.getByText("seeded")).toBeInTheDocument());
+    expect(screen.queryByText(/your timeline is empty/i)).toBeNull();
   });
 });

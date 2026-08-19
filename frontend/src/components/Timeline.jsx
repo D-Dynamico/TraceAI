@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listDocuments } from "../api/client";
 import { CATEGORY_COLORS, categoryColor } from "../categories";
+import { useColdStart } from "./ColdStartNotice";
 import LoadDemoButton from "./LoadDemoButton";
 import TimelineEntry from "./TimelineEntry";
 
@@ -21,12 +22,22 @@ export default function Timeline() {
   const [error, setError] = useState("");
   const [newestFirst, setNewestFirst] = useState(true);
   const [filter, setFilter] = useState("All");
+  // On a cold start the first list request is still in flight when the user can
+  // already click Load Demo, so two loads overlap and they can finish in either
+  // order. Only the newest one may write — otherwise the stale empty list lands
+  // after the seed and wipes the timeline the user just asked for.
+  const requestId = useRef(0);
+  const coldStart = useColdStart();
 
   const load = useCallback(async () => {
+    const id = ++requestId.current;
     try {
       setError("");
-      setDocs(await listDocuments());
+      const next = await listDocuments();
+      if (id !== requestId.current) return;
+      setDocs(next);
     } catch (e) {
+      if (id !== requestId.current) return;
       setError(e.message);
       setDocs([]);
     }
@@ -74,11 +85,13 @@ export default function Timeline() {
     return out;
   }, [docs, filter, newestFirst]);
 
-  if (docs === null) {
+  // A fast response never reaches the CTA below — it goes straight from this to
+  // the real timeline.
+  if (docs === null && !coldStart) {
     return <p className="py-12 text-center text-sm text-sand-500">Loading…</p>;
   }
 
-  if (error && docs.length === 0) {
+  if (docs && error && docs.length === 0) {
     return (
       <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
         {error}
@@ -86,13 +99,30 @@ export default function Timeline() {
     );
   }
 
-  if (docs.length === 0) {
+  // Empty *and* still-waking share one branch, and deliberately so: React keeps
+  // the LoadDemoButton mounted across the transition between them, so a seed
+  // started during the cold start keeps its in-flight spinner when the original
+  // (empty) list request finally lands underneath it. Two branches would remount
+  // the button mid-seed and it would look idle while still working.
+  if (docs === null || docs.length === 0) {
+    const waking = docs === null;
     return (
       <div className="rounded-xl border border-dashed border-sand-300 bg-paper px-6 py-16 text-center">
-        <p className="text-sm font-medium text-sand-600">Your timeline is empty</p>
+        <p className="text-sm font-medium text-sand-600">
+          {waking ? "Waking the server…" : "Your timeline is empty"}
+        </p>
         <p className="mt-1 text-xs text-sand-500">
-          Head to <span className="font-medium">Upload</span> to add documents,
-          URLs, or achievements — they’ll appear here in order.
+          {waking ? (
+            <>
+              It sleeps when idle, so the first load of a visit takes a moment.
+              Start the demo now and it’ll run as soon as the server is up.
+            </>
+          ) : (
+            <>
+              Head to <span className="font-medium">Upload</span> to add
+              documents, URLs, or achievements — they’ll appear here in order.
+            </>
+          )}
         </p>
         <div className="mt-6 flex flex-col items-center gap-2">
           <LoadDemoButton onLoaded={load} />
