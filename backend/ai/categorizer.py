@@ -22,7 +22,6 @@ defined in the plan. Three things this module takes seriously:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 import threading
@@ -179,32 +178,11 @@ def _parse_response(text: str) -> dict:
     """Turn a model response into a dict, tolerating markdown fences.
 
     `response_mime_type` should make this unnecessary, but models drift and a
-    ```json fence is the most common way they do.
+    ```json fence is the most common way they do. The tolerance itself is shared
+    with the other Gemini callers, which all drift the same way; only the
+    exception type is ours.
     """
-    cleaned = text.strip()
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
-    if fence:
-        cleaned = fence.group(1).strip()
-
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        # Last resort: pull out the outermost {...} span.
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start == -1 or end <= start:
-            raise CategorizationError(
-                f"Response was not JSON: {cleaned[:200]!r}"
-            ) from exc
-        try:
-            parsed = json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError as inner:
-            raise CategorizationError(
-                f"Response was not JSON: {cleaned[:200]!r}"
-            ) from inner
-
-    if not isinstance(parsed, dict):
-        raise CategorizationError(f"Expected a JSON object, got {type(parsed).__name__}.")
-    return parsed
+    return gemini.parse_json_object(text, CategorizationError)
 
 
 def fallback_categorization(

@@ -49,19 +49,12 @@ CREATE INDEX IF NOT EXISTS idx_entities_document ON entities(document_id);
 -- The relationship engine (Module 3) joins documents on shared entity values.
 CREATE INDEX IF NOT EXISTS idx_entities_type_value ON entities(entity_type, entity_value);
 
--- Relationships between documents/entities
-CREATE TABLE IF NOT EXISTS relationships (
-    id TEXT PRIMARY KEY,
-    source_id TEXT,
-    source_type TEXT,  -- document or entity
-    target_id TEXT,
-    target_type TEXT,
-    relation_type TEXT,  -- certifies_skill, skill_used_in, similar_to, etc.
-    weight REAL DEFAULT 1.0
-);
-
-CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_id);
-CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_id);
+-- No `relationships` table, deliberately. plan.md §5 sketched one, but the graph
+-- is computed on read (`graph/builder.py`): entity edges are joined from
+-- `entities`, similarity edges come from the vector store, and career paths have
+-- their own table below. Nothing ever wrote a relationship row, so the table and
+-- its two indexes were dropped rather than left looking like a store some reader
+-- should consult. An edge cannot go stale if it is never stored.
 
 -- Inferred career paths
 CREATE TABLE IF NOT EXISTS career_paths (

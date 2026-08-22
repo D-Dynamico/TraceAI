@@ -189,7 +189,9 @@ async def _index_document(
             raw_text=raw_text,
         )
         if chunks:
-            await run_in_threadpool(database.set_embedding_id, doc_id, doc_id)
+            await run_in_threadpool(
+                database.set_embedding_id, doc_id, doc_id, user_id=user_id
+            )
     except Exception:
         logger.exception("Embedding failed for %s — document left unindexed.", doc_id)
 
@@ -397,6 +399,7 @@ async def recategorize(
     stored_category = await run_in_threadpool(
         database.update_categorization,
         doc_id,
+        user_id=user_id,
         document_type=result.document_type,
         category=result.category,
         title=result.title,
@@ -573,6 +576,7 @@ async def reextract(
         stored_category = await run_in_threadpool(
             database.update_categorization,
             doc_id,
+            user_id=user_id,
             document_type=category_result.document_type,
             category=category_result.category,
             title=category_result.title,

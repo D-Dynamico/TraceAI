@@ -231,6 +231,7 @@ def list_career_paths(user_id: str = "demo") -> list[dict[str, Any]]:
 def update_categorization(
     doc_id: str,
     *,
+    user_id: str,
     document_type: str | None,
     category: str | None,
     title: str | None,
@@ -265,14 +266,21 @@ def update_categorization(
     skills, date) is still overwritten — only the field the user took ownership
     of is protected. Held here rather than in the route so no future caller can
     forget it.
+
+    **`user_id` is required and is part of the WHERE clause.** The routes check
+    ownership before calling, but that check and this write were two statements
+    with a gap between them — the document could be deleted, or its owner change,
+    in between. Scoping the write itself closes the gap and means the rule is
+    enforced where the row is touched rather than in each route that remembers.
     """
     with get_connection() as conn:
         existing = conn.execute(
-            "SELECT category, metadata_json FROM documents WHERE id = ?", (doc_id,)
+            "SELECT category, metadata_json FROM documents WHERE id = ? AND user_id = ?",
+            (doc_id, user_id),
         ).fetchone()
-        if existing is not None and (
-            _category_source(existing["metadata_json"], doc_id) == MANUAL_CATEGORY_SOURCE
-        ):
+        if existing is None:
+            return None  # gone, or never theirs
+        if _category_source(existing["metadata_json"], doc_id) == MANUAL_CATEGORY_SOURCE:
             category = existing["category"]
 
         conn.execute(
@@ -280,9 +288,9 @@ def update_categorization(
             UPDATE documents
             SET document_type = ?, category = ?, title = ?, summary = ?,
                 extracted_date = ?, confidence = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (document_type, category, title, summary, extracted_date, confidence, doc_id),
+            (document_type, category, title, summary, extracted_date, confidence, doc_id, user_id),
         )
         conn.execute("DELETE FROM entities WHERE document_id = ?", (doc_id,))
         conn.execute("DELETE FROM tags WHERE document_id = ?", (doc_id,))
@@ -434,17 +442,20 @@ def delete_document(doc_id: str, user_id: str = "demo") -> bool:
     return True
 
 
-def set_embedding_id(doc_id: str, embedding_id: str) -> None:
+def set_embedding_id(doc_id: str, embedding_id: str, *, user_id: str) -> None:
     """Mark a document as indexed in the vector store.
 
     Set only after `ai/embeddings.add_document` succeeds, so a NULL
-    `embedding_id` reliably means "not yet in Chroma" — which is exactly what
-    the startup sync in `ensure_synced` keys off to heal a partial index.
+    `embedding_id` reliably means "not yet in Chroma".
+
+    Scoped like every other write here: the id comes from the same request that
+    supplied `user_id`, so a mismatch means the row is not the caller's and the
+    update should touch nothing.
     """
     with get_connection() as conn:
         conn.execute(
-            "UPDATE documents SET embedding_id = ? WHERE id = ?",
-            (embedding_id, doc_id),
+            "UPDATE documents SET embedding_id = ? WHERE id = ? AND user_id = ?",
+            (embedding_id, doc_id, user_id),
         )
 
 

@@ -16,9 +16,7 @@ rate limiter (`ai/gemini.py`) with every other caller — the 5 RPM budget
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import threading
 import uuid
 from typing import Any, NamedTuple
@@ -112,23 +110,8 @@ def _build_profile(docs: list[dict[str, Any]]) -> str:
 
 
 def _parse_response(text: str) -> dict:
-    cleaned = (text or "").strip()
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
-    if fence:
-        cleaned = fence.group(1).strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start == -1 or end <= start:
-            raise _CareerPathError(f"Response was not JSON: {cleaned[:200]!r}") from exc
-        try:
-            parsed = json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError as inner:
-            raise _CareerPathError(f"Response was not JSON: {cleaned[:200]!r}") from inner
-    if not isinstance(parsed, dict):
-        raise _CareerPathError(f"Expected a JSON object, got {type(parsed).__name__}.")
-    return parsed
+    """Shared with every other Gemini caller — see `gemini.parse_json_object`."""
+    return gemini.parse_json_object(text, _CareerPathError)
 
 
 def _clamp_score(value: Any) -> float:

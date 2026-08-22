@@ -16,6 +16,7 @@ but through `build_model` so key configuration happens once.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -196,3 +197,40 @@ def generate(model, payload, *, limiter: RateLimiter | None = None):
         time.sleep(delay)
         limiter.wait()
         return model.generate_content(payload)
+
+
+_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+
+
+def parse_json_object(text: str, error: type[Exception]) -> dict:
+    """Turn a model response into a dict, tolerating the ways models drift.
+
+    Every Gemini caller here asks for JSON via `response_mime_type`, and every
+    one of them still needs this, because the two failure shapes are the same
+    everywhere: the object arrives wrapped in a ```json fence, or with prose
+    around it. So the tolerance lives once rather than in three copies that
+    differed only in which exception they raised — which is what `error` is for.
+
+    Raises `error` when the response is not a JSON object at all; the caller
+    turns that into its own `unreadable_response` degradation.
+    """
+    cleaned = (text or "").strip()
+    fence = _FENCE_RE.match(cleaned)
+    if fence:
+        cleaned = fence.group(1).strip()
+
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        # Last resort: pull out the outermost {...} span.
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start == -1 or end <= start:
+            raise error(f"Response was not JSON: {cleaned[:200]!r}") from exc
+        try:
+            parsed = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as inner:
+            raise error(f"Response was not JSON: {cleaned[:200]!r}") from inner
+
+    if not isinstance(parsed, dict):
+        raise error(f"Expected a JSON object, got {type(parsed).__name__}.")
+    return parsed

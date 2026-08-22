@@ -51,7 +51,15 @@ _TABLE: dict[str, tuple[bool, str]] = {
 
 
 def from_reason(reason: DegradedReason) -> Degradation:
-    retryable, message = _TABLE[reason]
+    """Look a reason up. Never raises, for the same reason its callers never do.
+
+    `_TABLE[reason]` was a KeyError waiting inside the one code path whose whole
+    job is degrading gracefully: an unknown reason — a typo, a new code added in
+    one place — would have turned a handled failure into an unhandled one, in
+    the exception handler. An unmapped reason degrades to the most conservative
+    reading instead: something went wrong, retrying may help.
+    """
+    retryable, message = _TABLE.get(reason, (True, "the AI step did not complete"))
     return Degradation(reason=reason, retryable=retryable, message=message)
 
 

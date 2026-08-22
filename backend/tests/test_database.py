@@ -99,3 +99,39 @@ def test_the_listing_index_exists():
             ).fetchall()
         }
     assert "idx_documents_user_date" in names
+
+
+def test_a_write_scoped_to_another_user_changes_nothing():
+    """The write is scoped, not just the check that precedes it.
+
+    /recategorize and /reextract verified ownership and *then* wrote — two
+    statements with a gap between them. Putting user_id in the WHERE clause
+    means the row itself decides, so a document that changed hands (or was
+    deleted) between the two cannot be written by the earlier check's authority.
+
+    Mutation check: drop `AND user_id = ?` from update_categorization and this
+    test turns red.
+    """
+    theirs = _insert("intruder", title="Theirs")
+
+    stored = database.update_categorization(
+        theirs,
+        user_id="demo",
+        document_type="certificate",
+        category="Certifications",
+        title="Hijacked",
+        summary="",
+        extracted_date=None,
+        confidence=0.9,
+    )
+
+    assert stored is None
+    assert database.get_document(theirs)["title"] == "Theirs"
+
+
+def test_the_embedding_marker_is_scoped_too():
+    theirs = _insert("intruder")
+
+    database.set_embedding_id(theirs, "x", user_id="demo")
+
+    assert database.get_document(theirs)["embedding_id"] is None

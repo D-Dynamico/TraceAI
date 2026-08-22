@@ -20,9 +20,7 @@ the same defence `career_path` applies to hallucinated evidence indices.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import threading
 from typing import Any, NamedTuple
 
@@ -104,23 +102,8 @@ def _build_sources(docs: list[dict[str, Any]]) -> str:
 
 
 def _parse_response(text: str) -> dict:
-    cleaned = (text or "").strip()
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
-    if fence:
-        cleaned = fence.group(1).strip()
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start == -1 or end <= start:
-            raise _RagError(f"Response was not JSON: {cleaned[:200]!r}") from exc
-        try:
-            parsed = json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError as inner:
-            raise _RagError(f"Response was not JSON: {cleaned[:200]!r}") from inner
-    if not isinstance(parsed, dict):
-        raise _RagError(f"Expected a JSON object, got {type(parsed).__name__}.")
-    return parsed
+    """Shared with every other Gemini caller — see `gemini.parse_json_object`."""
+    return gemini.parse_json_object(text, _RagError)
 
 
 def _map_citations(raw: Any, docs: list[dict[str, Any]]) -> list[str]:
