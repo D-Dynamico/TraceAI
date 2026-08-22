@@ -121,18 +121,19 @@ async def _semantic_search(query: str, k: int, user_id: str) -> list[SearchResul
     hits = await run_in_threadpool(
         embeddings.query, query, user_id=user_id, k=k
     )
-    results: list[SearchResult] = []
-    for hit in hits:
-        doc = await run_in_threadpool(database.get_document, hit["doc_id"])
-        if doc is None:
-            continue
-        # The vector store is filtered by user, but hydration reads by id from
-        # SQLite, which is not. Re-check here so a stale or spoofed index entry
-        # cannot surface another visitor's document through the search path.
-        if doc.get("user_id") != user_id:
-            continue
-        results.append(_to_result(doc, score=hit["score"]))
-    return results
+    # One batch, not one connection and three queries per hit. `get_documents`
+    # scopes to the user in SQL: the vector store is filtered by user, but
+    # hydration reads by id, so a stale or spoofed index entry must not be able
+    # to surface another visitor's document through the search path. A hit whose
+    # document is missing or not ours simply drops out.
+    docs = await run_in_threadpool(
+        database.get_documents, [h["doc_id"] for h in hits], user_id
+    )
+    return [
+        _to_result(docs[hit["doc_id"]], score=hit["score"])
+        for hit in hits
+        if hit["doc_id"] in docs
+    ]
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -227,11 +228,12 @@ async def answer(
             detail=f"Query is too long (max {MAX_QUERY_CHARS} characters).",
         )
 
-    docs: list[dict[str, Any]] = []
-    for doc_id in payload.doc_ids[:MAX_K]:
-        doc = await run_in_threadpool(database.get_document, doc_id)
-        if doc is not None and doc.get("user_id") == user_id:
-            docs.append(doc)
+    # Sliced to what synthesis will actually read before anything is fetched:
+    # `rag.synthesize` uses the first MAX_SOURCES, so hydrating MAX_K documents
+    # loaded the full text of up to fourteen that were then thrown away.
+    wanted = payload.doc_ids[:rag.MAX_SOURCES]
+    hydrated = await run_in_threadpool(database.get_documents, wanted, user_id)
+    docs = [hydrated[doc_id] for doc_id in wanted if doc_id in hydrated]
 
     result = await run_in_threadpool(rag.synthesize, query, docs)
     return AnswerResponse(

@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
+-- Every listing is `WHERE user_id = ? ORDER BY upload_date DESC` (the timeline,
+-- the graph, the structured search filter). On user_id alone SQLite filters and
+-- then sorts; the composite gives it the rows already in order.
+CREATE INDEX IF NOT EXISTS idx_documents_user_date ON documents(user_id, upload_date DESC);
 -- Timeline (Module 4) sorts on extracted_date.
 CREATE INDEX IF NOT EXISTS idx_documents_extracted_date ON documents(extracted_date);
 

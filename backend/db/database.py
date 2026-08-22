@@ -478,6 +478,61 @@ def get_document(doc_id: str) -> dict[str, Any] | None:
     return doc
 
 
+def get_documents(doc_ids: list[str], user_id: str) -> dict[str, dict[str, Any]]:
+    """Fetch several documents at once, scoped to their owner. Returns {id: doc}.
+
+    **Three queries and one connection, where the caller used to spend three per
+    hit.** Search hydrates every vector-store hit from SQLite; doing that with
+    `get_document` in a loop opened a fresh connection and issued three queries
+    per result, and the answer path does it for up to twenty. Same shape as
+    `get_document`, minus the ordering — the caller already knows the ranking.
+
+    `user_id` is required, not defaulted: this is the search path's isolation
+    boundary. The vector store is filtered by user, but hydration reads by id,
+    so a stale or spoofed index entry must not be able to surface another
+    visitor's document. Filtering in the SQL closes that here rather than asking
+    every caller to remember.
+    """
+    ids = list(dict.fromkeys(doc_ids))  # dedup, order-preserving
+    if not ids:
+        return {}
+
+    placeholders = ",".join("?" * len(ids))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM documents WHERE user_id = ? AND id IN ({placeholders})",
+            [user_id, *ids],
+        ).fetchall()
+        docs = {row["id"]: _row_to_dict(row) for row in rows}
+        if not docs:
+            return {}
+
+        owned = ",".join("?" * len(docs))
+        entities = conn.execute(
+            f"SELECT document_id, entity_type, entity_value FROM entities "
+            f"WHERE document_id IN ({owned})",
+            list(docs),
+        ).fetchall()
+        tags = conn.execute(
+            f"SELECT document_id, tag FROM tags WHERE document_id IN ({owned})",
+            list(docs),
+        ).fetchall()
+
+    for doc in docs.values():
+        doc["skills"] = []
+        doc["organizations"] = []
+        doc["people"] = []
+        doc["tags"] = []
+    _ENTITY_FIELD = {"skill": "skills", "organization": "organizations", "person": "people"}
+    for row in entities:
+        field = _ENTITY_FIELD.get(row["entity_type"])
+        if field:
+            docs[row["document_id"]][field].append(row["entity_value"])
+    for row in tags:
+        docs[row["document_id"]]["tags"].append(row["tag"])
+    return docs
+
+
 def list_documents(
     user_id: str = "demo",
     category: str | None = None,
