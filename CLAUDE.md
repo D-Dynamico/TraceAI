@@ -22,14 +22,21 @@ future reader would otherwise hit.
 ```bash
 # All backend commands run from backend/. Invoke the venv python directly.
 cd backend
-./.venv/Scripts/python.exe -m pytest -q          # 430 offline tests, ~1 min
+./.venv/Scripts/python.exe -m pytest -q          # 465 offline tests, ~1.5 min
 ./.venv/Scripts/python.exe -m pytest -m network  # 9 real-HTTP tests, ~7s
 ./.venv/Scripts/python.exe -m pytest -m live     # 7 live Gemini tests, ~1 min
 ./.venv/Scripts/python.exe -m pytest -m model    # 3 real-embedding tests, ~40s
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload --port 8000
 
 cd frontend && npm run dev                       # Vite on :5173
+cd frontend && npm test                          # 155 vitest tests
+cd frontend && npm run lint                      # eslint, must be clean
 ```
+
+`.github/workflows/ci.yml` runs the offline backend suite plus the frontend
+lint, tests and build on every push and PR — both hosts auto-deploy from
+`main`, so a red pipeline is the only thing standing between a bad commit and
+the live site. The quota-spending markers stay deselected there.
 
 ## Environment traps
 
