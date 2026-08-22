@@ -70,7 +70,12 @@ class RateLimiter:
 #
 # The cost is real: ~13s per call, so a scanned upload (Vision + categorization)
 # takes ~26s. Correct beats fast here — the alternative is a document that lands
-# with no text. plan.md §11's cache/batch/queue mitigations remain unbuilt.
+# with no text.
+#
+# Spacing covers RPM only. Of plan.md §11's cache/batch/queue, the cache half now
+# exists for the one repeat that matters (`ai/categorizer.py`'s result cache);
+# batching and a persistent queue remain unbuilt, so the day's 20th call still
+# degrades.
 rate_limiter = RateLimiter(min_interval_seconds=13.0)
 
 

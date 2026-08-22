@@ -193,3 +193,99 @@ def test_failure_reasons_are_readable(exc, expected):
     their request was slow when it was actually refused.
     """
     assert expected in categorizer._human_reason(exc)
+
+
+# --- result cache: the one RPD mitigation this module can make ---------------
+
+
+class _CountingModel:
+    """Returns a valid classification and counts how often it was asked."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate_content(self, prompt):
+        self.calls += 1
+        payload = (
+            '{"document_type": "certificate", "category": "Certifications",'
+            ' "title": "Python Certificate", "summary": "A Python course certificate.",'
+            ' "date": "2024-03", "skills": ["Python"], "organizations": [], "people": [],'
+            ' "confidence": 0.9}'
+        )
+        return type("R", (), {"text": payload})()
+
+
+@pytest.fixture
+def counting_model(monkeypatch):
+    monkeypatch.setattr(categorizer.settings, "gemini_api_key", "fake-key")
+    monkeypatch.setattr(categorizer, "_rate_limiter", type("N", (), {"wait": lambda s: None})())
+    model = _CountingModel()
+    monkeypatch.setattr(categorizer, "_get_model", lambda: model)
+    categorizer.clear_cache()
+    yield model
+    categorizer.clear_cache()
+
+
+def test_the_same_text_is_classified_once(counting_model):
+    """The cheapest win against 20 requests/day: re-uploading a file already
+    sent, or /recategorize on text that has not changed, used to spend a call."""
+    text = "This certifies completion of the Python Programming course."
+
+    first = categorizer.categorize(text, "cert.pdf")
+    second = categorizer.categorize(text, "cert.pdf")
+
+    assert counting_model.calls == 1
+    assert second.title == first.title
+    assert second.category == first.category
+
+
+def test_a_different_filename_is_a_different_classification(counting_model):
+    """The key is the whole prompt, and the filename is in it — the model is
+    told the filename and can classify on it, so two names are two questions."""
+    text = "This certifies completion of the Python Programming course."
+
+    categorizer.categorize(text, "cert.pdf")
+    categorizer.categorize(text, "resume.pdf")
+
+    assert counting_model.calls == 2
+
+
+def test_a_cache_hit_cannot_be_mutated_by_an_earlier_caller(counting_model):
+    text = "This certifies completion of the Python Programming course."
+
+    first = categorizer.categorize(text, "cert.pdf")
+    first.title = "MUTATED"
+    second = categorizer.categorize(text, "cert.pdf")
+
+    assert second.title == "Python Certificate"
+
+
+def test_a_degraded_result_is_never_cached(monkeypatch):
+    """A failure must not be replayed — `retryable` promises a fresh attempt."""
+    monkeypatch.setattr(categorizer.settings, "gemini_api_key", "fake-key")
+    monkeypatch.setattr(categorizer, "_rate_limiter", type("N", (), {"wait": lambda s: None})())
+    categorizer.clear_cache()
+
+    calls = []
+
+    class _Exploding:
+        def generate_content(self, prompt):
+            calls.append(prompt)
+            raise RuntimeError("503 backend unavailable")
+
+    monkeypatch.setattr(categorizer, "_get_model", lambda: _Exploding())
+
+    text = "Some certificate text here."
+    assert categorizer.categorize(text, "cert.pdf").degraded_reason == "unreachable"
+    assert categorizer.categorize(text, "cert.pdf").degraded_reason == "unreachable"
+
+    assert len(calls) == 2
+    categorizer.clear_cache()
+
+
+def test_the_cache_is_bounded(counting_model, monkeypatch):
+    monkeypatch.setattr(categorizer, "_CACHE_MAX", 3)
+    for i in range(5):
+        categorizer.categorize(f"Certificate number {i} for the Python course.", "c.pdf")
+
+    assert len(categorizer._cache) <= 3

@@ -724,7 +724,7 @@ TraceAI/
 
 | Risk | Mitigation |
 |---|---|
-| Gemini free tier rate limits (**5 RPM, 20/day** — see §2) | Serialized by one shared 13s limiter, which covers RPM. **RPD is not mitigated:** cache/batch/queue are still unbuilt, so the day's 20th call degrades. Demo from §14's seed, which spends none |
+| Gemini free tier rate limits (**5 RPM, 20/day** — see §2) | Serialized by one shared 13s limiter, which covers RPM, plus one retry on the delay a per-minute 429 asks for. **RPD is only partly mitigated:** categorization caches its result, so the same text is never classified twice, but batch and queue are still unbuilt and the day's 20th call degrades. Demo from §14's seed, which spends none |
 | OCR accuracy on scans | Fallback to Gemini 3 Flash Vision (free) |
 | Slow embedding generation | Pre-compute on upload, async processing |
 | No date in document | Use upload date as fallback, flag for user review |

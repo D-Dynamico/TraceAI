@@ -21,15 +21,20 @@ defined in the plan. Three things this module takes seriously:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from ai import degradation
 from ai import gemini
-from config import settings
+# Not read here — `gemini` owns key configuration. Kept because tests reach the
+# singleton through `categorizer.settings` to flip the key on and off, and it is
+# the same object every module shares (see CLAUDE.md).
+from config import settings  # noqa: F401
 from models.document import Categorization
 
 logger = logging.getLogger(__name__)
@@ -89,6 +94,58 @@ _GENERATION_CONFIG = {"response_mime_type": "application/json", "temperature": 0
 
 _model = None
 _model_lock = threading.Lock()
+
+# --- Result cache ----------------------------------------------------------
+#
+# **The one mitigation the 20-requests-per-day cap actually allows here.**
+# Spacing (ai/gemini.py's limiter) handles 5 RPM; nothing handles 20 RPD, and
+# plan.md §11 lists cache/batch/queue as unbuilt. This is the cache half, for
+# the case that costs the most for the least: the *same text* classified twice —
+# re-uploading a file already sent, or /recategorize on a document whose text has
+# not changed. Both used to spend a call out of twenty.
+#
+# In-process and bounded, not persisted. The instance is wiped on every deploy
+# and spins down after ~15 minutes idle, so a disk-backed cache would survive
+# barely longer than this one while adding a schema to migrate; a repeat within
+# one session is the case worth catching. A miss costs nothing but the call that
+# would have happened anyway.
+#
+# Keyed on the exact prompt, so the filename, the truncation, and any future
+# prompt edit all participate — a changed prompt cannot serve an answer produced
+# by the old one.
+_CACHE_MAX = 128
+_cache: OrderedDict[str, Categorization] = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _cache_key(prompt: str) -> str:
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+def _cache_get(key: str) -> Categorization | None:
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is None:
+            return None
+        _cache.move_to_end(key)
+        # A copy: the caller may fill in a title or a category override, and a
+        # cached object handed out twice would carry the first caller's edits
+        # into the second's result.
+        return hit.model_copy(deep=True)
+
+
+def _cache_put(key: str, result: Categorization) -> None:
+    with _cache_lock:
+        _cache[key] = result.model_copy(deep=True)
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_MAX:
+            _cache.popitem(last=False)
+
+
+def clear_cache() -> None:
+    """Empty the result cache. For tests, and for anything that must force a call."""
+    with _cache_lock:
+        _cache.clear()
 
 
 class CategorizationError(RuntimeError):
@@ -235,6 +292,12 @@ def categorize(text: str, filename: str = "") -> Categorization:
 
     prompt = PROMPT_TEMPLATE.format(filename=filename or "(unknown)", text=truncated)
 
+    key = _cache_key(prompt)
+    cached = _cache_get(key)
+    if cached is not None:
+        logger.info("Categorization cache hit for %s — no Gemini call.", filename)
+        return cached
+
     try:
         model = _get_model()
         response = gemini.generate(model, prompt, limiter=_rate_limiter)
@@ -263,4 +326,8 @@ def categorize(text: str, filename: str = "") -> Categorization:
         "Categorized %s as %s/%s (confidence=%.2f)",
         filename, result.category, result.document_type, result.confidence,
     )
+    # Only a real classification is cached. Every fallback path returns above
+    # without reaching here, so a degraded result can never be replayed — the
+    # next attempt gets a fresh call, which is the whole point of `retryable`.
+    _cache_put(key, result)
     return result
