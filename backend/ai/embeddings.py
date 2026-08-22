@@ -248,6 +248,16 @@ def _wipe_store() -> None:
     settings.chroma_dir.mkdir(parents=True, exist_ok=True)
 
 
+def indexed_count() -> int:
+    """How many distinct documents the store holds. Opens it if it is not open.
+
+    The health check's readiness probe: it fails loudly if the store is missing
+    or corrupt, which is the failure `main.py` deliberately swallows at startup
+    so a broken store cannot stop the app from booting.
+    """
+    return len(_indexed_doc_ids(_get_collection()))
+
+
 def _indexed_doc_ids(collection) -> set[str]:
     """The set of distinct document ids currently present in the store."""
     got = collection.get(include=["metadatas"])

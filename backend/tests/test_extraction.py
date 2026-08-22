@@ -7,10 +7,38 @@ from conftest import DOCX_MIME, PPTX_MIME, make_docx, make_pptx, upload
 
 
 def test_health_reports_ok(client):
-    body = client.get("/api/health").json()
+    resp = client.get("/api/health")
+    body = resp.json()
 
+    assert resp.status_code == 200
     assert body["status"] == "ok"
     assert "ai_configured" in body
+    # "ok" has to mean the stores answered, not just that the process is up.
+    assert body["database"] == "ok"
+    assert body["vector_store"] == "ok"
+
+
+def test_health_reports_a_broken_vector_store(client, monkeypatch):
+    """The failure this check exists for.
+
+    `main.py` swallows a vector-store sync error on purpose — a broken store
+    must not stop the app booting — so the health check is the only thing that
+    can say search is degraded. Reporting `ok` regardless made it useless in
+    exactly the case it was wired to Render for.
+    """
+    from ai import embeddings
+
+    def _broken():
+        raise RuntimeError("chroma is gone")
+
+    monkeypatch.setattr(embeddings, "indexed_count", _broken)
+
+    resp = client.get("/api/health")
+
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "degraded"
+    assert resp.json()["vector_store"] == "error"
+    assert resp.json()["database"] == "ok"  # named separately, not lumped together
 
 
 def test_health_never_exposes_the_api_key(client, monkeypatch):

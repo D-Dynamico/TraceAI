@@ -126,3 +126,70 @@ class TestSqlInjection:
         # The table must still be there.
         assert client.get("/api/documents").status_code == 200
         assert len(client.get("/api/documents").json()) == 1
+
+
+class TestErrorsDoNotLeakInternals:
+    """A 500 must not hand the client a path from inside the container.
+
+    Three routes echoed `str(exc)` back — an IOError's message is the stored
+    path, and an extraction failure's often is too. They are logged in full;
+    the response says what happened and nothing about where.
+    """
+
+    def test_a_storage_failure_reports_no_path(self, client, monkeypatch):
+        from routes import upload as upload_route
+
+        def _boom(user_id, doc_id, filename, contents):
+            raise IOError(r"[Errno 28] No space left: '/srv/traceai/uploads/demo/x.txt'")
+
+        monkeypatch.setattr(upload_route.storage, "save_original", _boom)
+
+        resp = client.post(
+            "/api/upload", files={"file": ("notes.txt", b"some text", "text/plain")}
+        )
+
+        assert resp.status_code == 500
+        assert "/srv/traceai" not in resp.text
+        assert "Errno" not in resp.text
+
+    def test_an_extraction_failure_reports_no_path(self, client, monkeypatch):
+        from routes import upload as upload_route
+
+        def _boom(path):
+            raise RuntimeError(f"parser died reading {path}")
+
+        monkeypatch.setattr(upload_route.file_parser, "extract_text", _boom)
+
+        resp = client.post(
+            "/api/upload", files={"file": ("notes.txt", b"some text", "text/plain")}
+        )
+
+        assert resp.status_code == 422
+        assert "uploads" not in resp.text.lower()
+
+    def test_an_unhandled_error_returns_the_degradation_envelope(self, monkeypatch):
+        """Anything a route did not catch still answers in a shape a client can read.
+
+        Built with `raise_server_exceptions=False` because TestClient's default
+        is to re-raise a 500 into the test instead of returning it — which is
+        useful everywhere else and hides exactly the response under test here.
+        Starlette still re-raises after the handler has produced the response, so
+        this is what a browser receives.
+        """
+        from fastapi.testclient import TestClient
+
+        from main import app
+        from routes import documents as documents_route
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("internal detail nobody outside should see")
+
+        monkeypatch.setattr(documents_route.database, "list_documents", _boom)
+
+        resp = TestClient(app, raise_server_exceptions=False).get("/api/documents")
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body["reason"] == "internal_error"
+        assert body["retryable"] is True
+        assert "internal detail" not in resp.text

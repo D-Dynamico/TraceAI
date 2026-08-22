@@ -256,8 +256,12 @@ async def upload_file(
             user_id, doc_id, filename, contents
         )
     except IOError as exc:
+        # Logged in full, reported in outline: an IOError's message is a path
+        # from inside the container, and the client can do nothing with it.
         logger.error("Failed to store original for %s: %s", filename, exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500, detail="Could not store the uploaded file."
+        ) from exc
 
     # Extract text. The original is only ever read from here on — never written.
     # Off the event loop: extraction is CPU-bound for a text-layer document, but a
@@ -270,8 +274,11 @@ async def upload_file(
     except file_parser.UnsupportedFileError as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     except Exception as exc:  # parser blew up on a corrupt file
+        # The exception text names the stored path; the log gets it, not the caller.
         logger.exception("Extraction failed for %s", stored_path)
-        raise HTTPException(status_code=422, detail=f"Extraction failed: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail="Could not read any text from this file."
+        ) from exc
 
     rel_path = str(stored_path.relative_to(settings.upload_dir.parent))
     upload_date = storage.now_iso()
@@ -491,7 +498,9 @@ async def reextract(
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Re-extraction failed for %s", stored_path)
-        raise HTTPException(status_code=422, detail=f"Extraction failed: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail="Could not read any text from this file."
+        ) from exc
 
     text = result.text.strip()
     reason = result.degraded.reason if result.degraded else None
@@ -708,7 +717,9 @@ async def ingest_url(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("URL ingestion failed for %s", payload.url)
-        raise HTTPException(status_code=422, detail=f"URL ingestion failed: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail="Could not read anything from that URL."
+        ) from exc
 
     if not result.text.strip():
         # Nothing was extracted, so there is nothing to categorize or store.
