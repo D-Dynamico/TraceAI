@@ -135,3 +135,48 @@ def test_the_embedding_marker_is_scoped_too():
     database.set_embedding_id(theirs, "x", user_id="demo")
 
     assert database.get_document(theirs)["embedding_id"] is None
+
+
+def test_init_db_upgrades_a_database_from_before_the_user_id_column(tmp_path, monkeypatch):
+    """Startup must survive a database older than the newest column.
+
+    Migrations used to run *after* the schema script, and the script creates an
+    index on `career_paths(user_id)` — a column the migration had not added yet.
+    On any pre-migration database `init_db` raised "no such column: user_id" and
+    the app did not boot at all. It hid because the deploy target's disk is
+    ephemeral: every deployed database is new, and only a long-lived developer
+    one is old enough to reach it.
+    """
+    import sqlite3
+
+    from config import settings
+
+    old = tmp_path / "old.db"
+    conn = sqlite3.connect(old)
+    # The real shape of a database from that era: today's schema, minus the one
+    # column the migration adds. Built by stripping it from schema.sql rather
+    # than hand-writing a subset, so this cannot drift into testing a table the
+    # app never had.
+    era_schema = database.SCHEMA_PATH.read_text(encoding="utf-8")
+    era_schema = era_schema.replace(
+        "    user_id TEXT NOT NULL DEFAULT 'demo',\n    title TEXT,", "    title TEXT,"
+    )
+    era_schema = era_schema.replace(
+        "CREATE INDEX IF NOT EXISTS idx_career_paths_user ON career_paths(user_id);", ""
+    )
+    assert "career_paths(user_id)" not in era_schema
+    conn.executescript(era_schema)
+    conn.execute("INSERT INTO career_paths (id, title) VALUES ('cp1', 'AI/ML Engineer')")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(settings, "db_path", old)
+    database.init_db()
+
+    with database.get_connection() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(career_paths)")}
+        # The pre-existing row keeps the shared dataset it was inferred for.
+        owner = conn.execute("SELECT user_id FROM career_paths WHERE id = 'cp1'").fetchone()
+
+    assert "user_id" in columns
+    assert owner["user_id"] == "demo"

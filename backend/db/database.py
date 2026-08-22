@@ -58,11 +58,25 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Safe to call on every startup."""
+    """Create tables if they don't exist. Safe to call on every startup.
+
+    **Migrations run first.** They used to run after the schema script, which
+    was the wrong order and broke startup outright on any database predating
+    the `career_paths.user_id` column: the script's
+    `CREATE INDEX ... ON career_paths(user_id)` referenced a column the
+    migration had not added yet, so `init_db` raised "no such column: user_id"
+    and the app would not boot. It went unnoticed because the deploy target's
+    disk is ephemeral — every deployed database is brand new, and only a
+    long-lived developer one is old enough to hit it.
+
+    Running first is safe both ways: on a fresh database the tables do not exist
+    yet, `PRAGMA table_info` returns nothing, and every step is a no-op before
+    the script creates everything correctly.
+    """
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     with get_connection() as conn:
-        conn.executescript(schema)
         _migrate(conn)
+        conn.executescript(schema)
     logger.info("Database ready at %s", settings.db_path)
 
 
@@ -76,6 +90,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     must be idempotent and safe to run on every startup.
     """
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(career_paths)")}
+    if not columns:
+        return  # fresh database — the schema script below creates it correctly
     if "user_id" not in columns:
         # Existing rows were inferred for the shared dataset, so they belong to
         # it — the DEFAULT backfills them rather than orphaning them under an id
