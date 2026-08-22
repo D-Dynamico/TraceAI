@@ -425,6 +425,28 @@ DOCS = [
 ]
 
 
+def scoped_id(user_id: str, doc_id: str) -> str:
+    """The id this document gets *for this visitor*.
+
+    **`documents.id` is a global primary key, and the seed's ids are fixed
+    constants.** Once every visitor got their own dataset, that combination
+    meant only the first visitor could ever load the demo: the second one's
+    insert collided on `demo-python-cert` and the whole request 500'd, because
+    `_clear_demo` correctly deletes only the *caller's* rows and so never
+    cleared the row in the way. On the deployed site that is every visitor after
+    the first — masked only by the ephemeral disk, which resets the count to
+    zero on each deploy.
+
+    So the visitor is folded into the id. Hashed rather than concatenated so the
+    id stays a fixed length whatever the id is, and derived rather than random so
+    re-seeding the same visitor still replaces their rows instead of duplicating
+    them. The `demo-` prefix is kept because that is what marks a row as seeded
+    (`_clear_demo`, and the API's own "is this the demo profile?" checks).
+    """
+    tag = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8]
+    return f"demo-{tag}-{doc_id.removeprefix('demo-')}"
+
+
 def _clear_demo(user_id: str) -> None:
     """Remove previously seeded demo documents so a re-run is idempotent.
 
@@ -464,8 +486,9 @@ def load_demo(user_id: str = USER) -> dict[str, object]:
         raw = doc["raw_text"]
         # Fileless documents pin the SHA-256 of their text, not a file (CLAUDE.md).
         checksum = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        doc_id = scoped_id(user_id, doc["id"])
         database.insert_document(
-            doc_id=doc["id"],
+            doc_id=doc_id,
             user_id=user_id,
             filename=doc["title"],
             original_path="",
@@ -486,7 +509,7 @@ def load_demo(user_id: str = USER) -> dict[str, object]:
             tags=doc.get("tags", []),
         )
         embeddings.add_document(
-            doc_id=doc["id"], user_id=user_id, title=doc["title"], raw_text=raw
+            doc_id=doc_id, user_id=user_id, title=doc["title"], raw_text=raw
         )
 
     return {"seeded": len(DOCS), "user_id": user_id}

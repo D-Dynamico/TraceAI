@@ -90,3 +90,76 @@ def test_load_demo_callable_directly(client):
     """The CLI/importable entrypoint works without the HTTP layer."""
     result = load_demo("demo")
     assert result == {"seeded": 10, "user_id": "demo"}
+
+
+# --- Two visitors, one demo profile ----------------------------------------
+
+
+def _seed_as(client, user_id):
+    return client.post("/api/seed-demo", headers={"X-User-Id": user_id})
+
+
+ALICE = "aaaaaaaabbbbccccddddeeeeffff0000"
+BOB = "11112222333344445555666677778888"
+
+
+def test_a_second_visitor_can_also_load_the_demo(client):
+    """The bug this file did not catch for a whole phase.
+
+    `documents.id` is a global primary key and the seed's ids were fixed
+    constants, so the second visitor's insert collided on `demo-python-cert`
+    and the endpoint 500'd — `_clear_demo` deletes only the *caller's* rows, so
+    nothing ever cleared the row in the way. On the deployed site that is every
+    visitor after the first; the ephemeral disk hid it by resetting the count on
+    each deploy. Every test here seeded exactly one user, which is why it lived.
+    """
+    assert _seed_as(client, ALICE).status_code == 200
+    second = _seed_as(client, BOB)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["seeded"] == len(DOCS)
+
+
+def test_each_visitor_sees_only_their_own_copy(client):
+    _seed_as(client, ALICE)
+    _seed_as(client, BOB)
+
+    alice_docs = client.get("/api/documents", headers={"X-User-Id": ALICE}).json()
+    bob_docs = client.get("/api/documents", headers={"X-User-Id": BOB}).json()
+
+    assert len(alice_docs) == len(bob_docs) == len(DOCS)
+    # Same documents, different rows — no id is shared between the two datasets.
+    assert {d["id"] for d in alice_docs}.isdisjoint({d["id"] for d in bob_docs})
+    assert {d["title"] for d in alice_docs} == {d["title"] for d in bob_docs}
+
+
+def test_reseeding_still_replaces_rather_than_duplicates(client):
+    """The scoped id must stay *derived*, not random, or a re-seed stacks up."""
+    _seed_as(client, ALICE)
+    first = {d["id"] for d in client.get("/api/documents", headers={"X-User-Id": ALICE}).json()}
+
+    _seed_as(client, ALICE)
+    again = client.get("/api/documents", headers={"X-User-Id": ALICE}).json()
+
+    assert len(again) == len(DOCS)
+    assert {d["id"] for d in again} == first
+
+
+def test_one_visitors_graph_holds_only_their_own_documents(client):
+    """The seeded ids feed the graph, so a collision there would cross datasets."""
+    _seed_as(client, ALICE)
+    _seed_as(client, BOB)
+
+    alice_nodes = {
+        n["id"]
+        for n in client.get("/api/graph", headers={"X-User-Id": ALICE}).json()["nodes"]
+        if n["type"] == "document"
+    }
+    bob_nodes = {
+        n["id"]
+        for n in client.get("/api/graph", headers={"X-User-Id": BOB}).json()["nodes"]
+        if n["type"] == "document"
+    }
+
+    assert alice_nodes and bob_nodes
+    assert alice_nodes.isdisjoint(bob_nodes)
