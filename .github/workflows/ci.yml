@@ -45,6 +45,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       # The build is the half a test suite cannot cover: Vercel runs exactly
       # this, so a broken import or a bad Tailwind config fails here instead of

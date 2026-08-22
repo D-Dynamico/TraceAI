@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { answer as fetchAnswer, search } from "../api/client";
 import AnswerCard from "./AnswerCard";
 import SourceRow from "./SourceRow";
+import { ErrorBanner } from "./cardParts";
 
 // plan.md §16: the queries the demo must answer. Shown as chips so a reviewer
 // knows what to try without guessing.
@@ -23,28 +24,41 @@ export default function Search() {
   const [answerBusy, setAnswerBusy] = useState(false);
   const [answerData, setAnswerData] = useState(null);
   const inputRef = useRef(null);
+  // Only the newest search may write. Two searches can be in flight at once —
+  // and the answer is the slower of the two requests each one makes, so a slow
+  // answer for query A could land after query B's sources had rendered, putting
+  // an answer above sources it was not synthesized from. That quietly breaks the
+  // grounding this screen claims ("Answered from your documents"), which is the
+  // one promise it cannot afford to fake. Timeline carries the same guard for
+  // the same reason.
+  const requestId = useRef(0);
 
   // The search bar is focused on arrival (plan.md §6 View 4).
   useEffect(() => inputRef.current?.focus(), []);
 
   // Synthesize an answer over the sources search returned. Kept separate from
   // run() so a retry can re-fire it without re-running the search.
-  async function loadAnswer(q, results) {
+  async function loadAnswer(q, results, id = requestId.current) {
     setAnswerBusy(true);
     setAnswerData(null);
     try {
-      setAnswerData(await fetchAnswer(q, results.map((r) => r.id)));
+      const data = await fetchAnswer(q, results.map((r) => r.id));
+      if (id !== requestId.current) return;
+      setAnswerData(data);
     } catch (e) {
+      if (id !== requestId.current) return;
       // A failed answer must never blank the sources — degrade to sources-only.
       setAnswerData(null);
       setError(e.message);
+    } finally {
+      if (id === requestId.current) setAnswerBusy(false);
     }
-    setAnswerBusy(false);
   }
 
   async function run(q) {
     const trimmed = (q ?? query).trim();
     if (!trimmed) return;
+    const id = ++requestId.current;
     setQuery(trimmed);
     setBusy(true);
     setError("");
@@ -52,16 +66,19 @@ export default function Search() {
     setAnswerBusy(false);
     try {
       const res = await search(trimmed);
+      if (id !== requestId.current) return;
       setResponse(res);
       // A question over at least one source gets a synthesized answer card.
       if (res.answerable && res.results.length > 0) {
-        loadAnswer(trimmed, res.results);
+        loadAnswer(trimmed, res.results, id);
       }
     } catch (e) {
+      if (id !== requestId.current) return;
       setError(e.message);
       setResponse(null);
+    } finally {
+      if (id === requestId.current) setBusy(false);
     }
-    setBusy(false);
   }
 
   const isSemantic = response?.mode === "semantic";
@@ -72,7 +89,14 @@ export default function Search() {
   return (
     <div className="space-y-5">
       <div className="flex gap-2">
+        {/* Labelled, not placeholder-only: a placeholder disappears the moment
+            typing starts and is not a name for the field. Visually hidden so the
+            layout is unchanged — the label is for the people who need it. */}
+        <label htmlFor="search-query" className="sr-only">
+          Search your documents
+        </label>
         <input
+          id="search-query"
           ref={inputRef}
           type="search"
           value={query}
@@ -105,11 +129,7 @@ export default function Search() {
         </div>
       )}
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      <ErrorBanner message={error} />
 
       {response && (
         <div className="space-y-3">

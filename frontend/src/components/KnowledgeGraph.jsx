@@ -17,7 +17,7 @@ import {
   GRAPH_NODE_SELECTED,
   SURFACE_PAPER,
 } from "../categories";
-import { DEGRADED_COPY } from "./cardParts";
+import { DEGRADED_COPY, ErrorBanner } from "./cardParts";
 import ColdStartNotice from "./ColdStartNotice";
 import LoadDemoButton from "./LoadDemoButton";
 import NodeDetailPanel from "./NodeDetailPanel";
@@ -156,10 +156,21 @@ export default function KnowledgeGraph() {
   const [width, setWidth] = useState(720);
   const [, tick] = useReducer((n) => n + 1, 0);
 
+  // Only the newest load may write: this runs on mount and again after career
+  // inference, so two can overlap. It also clears `error` on success — a
+  // transient failure used to leave the message set for the rest of the
+  // session, waiting to be shown the next time the graph happened to be empty.
+  const requestId = useRef(0);
+
   async function load() {
+    const id = ++requestId.current;
     try {
-      setData(await getGraph());
+      const next = await getGraph();
+      if (id !== requestId.current) return;
+      setError("");
+      setData(next);
     } catch (e) {
+      if (id !== requestId.current) return;
       setError(e.message);
       setData({ nodes: [], edges: [] });
     }
@@ -248,7 +259,6 @@ export default function KnowledgeGraph() {
 
     simRef.current = sim;
     return () => sim.stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, width, height]);
 
   // Map a pointer event to simulation coordinates (the SVG viewBox is 0 0 w h,
@@ -288,6 +298,35 @@ export default function KnowledgeGraph() {
     node.fy = null;
     // A real drag should not also be read as a click-to-select.
     if (!wasDrag) setSelectedId((cur) => (cur === node.id ? null : node.id));
+  }
+
+  // What a screen reader hears on a node: the same three facts the tooltip
+  // shows, since a sighted user gets them on hover and a keyboard user gets
+  // nothing otherwise.
+  function nodeLabel(node) {
+    if (node.type === "career_path") {
+      const pct =
+        typeof node.match_score === "number"
+          ? `, ${Math.round(node.match_score * 100)} percent match`
+          : "";
+      return `Career path: ${node.label}${pct}`;
+    }
+    if (node.type === "skill") return `Skill: ${node.label}`;
+    const category = node.category ? `, ${node.category}` : "";
+    const date =
+      node.date_source === "extracted" && node.effective_date
+        ? `, ${node.effective_date}`
+        : "";
+    return `Document: ${node.label}${category}${date}`;
+  }
+
+  function onNodeKeyDown(event, node) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    // Space scrolls the page by default, which would move the graph out from
+    // under the node the user was about to open.
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedId((cur) => (cur === node.id ? null : node.id));
   }
 
   const selectedNode = selectedId ? model?.byId.get(selectedId) : null;
@@ -350,9 +389,7 @@ export default function KnowledgeGraph() {
   }
   if (error && data.nodes.length === 0) {
     return (
-      <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {error}
-      </p>
+      <ErrorBanner message={error} />
     );
   }
   if (data.nodes.length === 0) {
@@ -450,6 +487,8 @@ export default function KnowledgeGraph() {
           viewBox={`0 0 ${width} ${height}`}
           preserveAspectRatio="xMidYMid meet"
           className="block touch-none select-none"
+          role="group"
+          aria-label={`Knowledge graph: ${nodesRef.current.length} nodes, ${linksRef.current.length} connections. Tab through the nodes; Enter opens one.`}
           onClick={() => setSelectedId(null)}
         >
           {/* Edges first, so nodes sit on top. */}
@@ -486,6 +525,19 @@ export default function KnowledgeGraph() {
                   key={node.id}
                   transform={`translate(${node.x ?? 0}, ${node.y ?? 0})`}
                   style={{ cursor: "pointer", opacity }}
+                  /* Reachable without a pointer. The graph is the view this app
+                     is judged on and it was pointer-only: no tab stop, no way to
+                     open a node, nothing announced. A bare <g> is not focusable
+                     and has no role, so both are stated here, and the tooltip
+                     follows focus as well as hover (WCAG 1.4.13 — information on
+                     hover must also be available to keyboard users). */
+                  tabIndex={0}
+                  role="button"
+                  aria-label={nodeLabel(node)}
+                  aria-pressed={isSel}
+                  onKeyDown={(e) => onNodeKeyDown(e, node)}
+                  onFocus={() => setHoverId(node.id)}
+                  onBlur={() => setHoverId((c) => (c === node.id ? null : c))}
                   onPointerDown={(e) => onNodePointerDown(e, node)}
                   onPointerMove={(e) => onNodePointerMove(e, node)}
                   onPointerUp={(e) => onNodePointerUp(e, node)}

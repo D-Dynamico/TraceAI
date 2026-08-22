@@ -10,6 +10,8 @@
 // the assumed-date rule) so a category, a date, and a download behave exactly as
 // they do on the timeline and search views — never re-derived here.
 
+import { useEffect, useRef } from "react";
+
 import {
   AssumedDateNotice,
   CategoryBadge,
@@ -55,10 +57,47 @@ const RELATION_LABEL = {
 };
 
 export default function NodeDetailPanel({ node, connections, onSelect, onClose }) {
+  const panelRef = useRef(null);
+  // Where focus was when the panel opened, so it can go back there on close.
+  // Without this, dismissing the panel drops focus to the document body and a
+  // keyboard user restarts their tab journey from the top of the page.
+  const openerRef = useRef(null);
+
+  const nodeId = node?.id;
+
+  useEffect(() => {
+    if (!nodeId) return undefined;
+    openerRef.current = document.activeElement;
+    // Captured now, not read in the cleanup: by the time cleanup runs React may
+    // already have detached the node the ref pointed at.
+    const panel = panelRef.current;
+
+    function onKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      // Only if focus is still inside the panel being dismissed — otherwise a
+      // click elsewhere would be yanked back to the node that was open.
+      const opener = openerRef.current;
+      if (panel?.contains(document.activeElement) && opener?.focus) {
+        opener.focus();
+      }
+    };
+    // Re-armed per node: selecting a connected row swaps the panel's contents,
+    // and the node that opened *that* is the one to return to.
+  }, [nodeId, onClose]);
+
   if (!node) return null;
 
   return (
-    <aside className="absolute right-3 top-3 z-10 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-sand-200 bg-paper p-4 shadow-lg">
+    <aside
+      ref={panelRef}
+      role="dialog"
+      aria-label={`Details: ${node.label}`}
+      className="absolute right-3 top-3 z-10 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-sand-200 bg-paper p-4 shadow-lg"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           {node.type === "document" && <CategoryBadge category={node.category} />}

@@ -4,6 +4,7 @@ import { CATEGORY_COLORS, categoryColor } from "../categories";
 import { useColdStart } from "./ColdStartNotice";
 import LoadDemoButton from "./LoadDemoButton";
 import TimelineEntry from "./TimelineEntry";
+import { ErrorBanner } from "./cardParts";
 
 // The journey view (plan.md §6 View 2). This is also the persistent "load
 // existing documents" surface — it reads GET /api/documents (already ordered
@@ -93,9 +94,7 @@ export default function Timeline() {
 
   if (docs && error && docs.length === 0) {
     return (
-      <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        {error}
-      </p>
+      <ErrorBanner message={error} />
     );
   }
 

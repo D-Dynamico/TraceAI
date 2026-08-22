@@ -203,3 +203,69 @@ describe("Search suggested chips", () => {
     );
   });
 });
+
+describe("a slow answer cannot land on the wrong sources", () => {
+  it("drops the first query's answer when a second query has already resolved", async () => {
+    // The grounding claim on this screen ("Answered from your documents") is the
+    // one thing it cannot fake, and two in-flight searches were enough to break
+    // it: the answer is the slower of the two requests each search fires, so A's
+    // answer could arrive after B's sources had rendered and sit above them.
+    const user = userEvent.setup();
+
+    let releaseFirstAnswer;
+    const firstAnswer = new Promise((resolve) => {
+      releaseFirstAnswer = resolve;
+    });
+
+    vi.spyOn(client, "search")
+      .mockResolvedValueOnce(questionResponse({ query: "first question?" }))
+      .mockResolvedValueOnce(
+        questionResponse({
+          query: "second question?",
+          results: [
+            {
+              id: "d9",
+              title: "Second Doc",
+              category: "Projects",
+              file_type: "pdf",
+              has_original: true,
+              date_source: "extracted",
+              effective_date: "2025-01",
+            },
+          ],
+        })
+      );
+
+    vi.spyOn(client, "answer")
+      .mockImplementationOnce(() => firstAnswer)
+      .mockResolvedValueOnce({
+        answer: "The second answer.",
+        cited_doc_ids: ["d9"],
+        degraded_reason: null,
+        retryable: false,
+      });
+
+    render(<Search />);
+    const input = screen.getByRole("searchbox");
+
+    await user.type(input, "first question?");
+    await user.keyboard("{Enter}");
+    await screen.findByText("Python Cert");
+
+    await user.clear(input);
+    await user.type(input, "second question?");
+    await user.keyboard("{Enter}");
+    await screen.findByText("The second answer.");
+
+    // Now let the stale answer come back.
+    releaseFirstAnswer({
+      answer: "The FIRST answer, about documents no longer on screen.",
+      cited_doc_ids: ["d1"],
+      degraded_reason: null,
+      retryable: false,
+    });
+
+    await waitFor(() => expect(screen.getByText("The second answer.")).toBeTruthy());
+    expect(screen.queryByText(/FIRST answer/)).toBeNull();
+  });
+})

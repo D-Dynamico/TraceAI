@@ -125,3 +125,28 @@ describe("Upload progress + errors", () => {
     expect(await screen.findByText(/broken\.pdf: Upload failed \(500\)/i)).toBeInTheDocument();
   });
 });
+
+describe("reaching the upload controls without a pointer", () => {
+  it("makes the drop zone a real button", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    render(<Upload />);
+
+    const zone = screen.getByRole("button", { name: /choose files/i });
+    expect(zone.getAttribute("tabindex")).toBe("0");
+
+    // Enter must reach the hidden <input type="file"> the div stands in for.
+    const input = document.querySelector('input[type="file"]');
+    const click = vi.spyOn(input, "click").mockImplementation(() => {});
+    zone.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(click).toHaveBeenCalled();
+  });
+
+  it("names the URL and text inputs, which had only placeholders", () => {
+    render(<Upload />);
+
+    expect(screen.getByLabelText(/portfolio URL/i)).toBeTruthy();
+    expect(screen.getByLabelText(/achievement/i)).toBeTruthy();
+  });
+})

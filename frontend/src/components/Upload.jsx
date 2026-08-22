@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { uploadFile, ingestUrl, ingestText } from "../api/client";
 import GitHubCard from "./GitHubCard";
 import ResultCard from "./ResultCard";
-import { CardShell } from "./cardParts";
+import { CardShell, ErrorBanner } from "./cardParts";
 
 const ACCEPT = ".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,.tiff,.bmp,.webp";
 
@@ -146,6 +146,19 @@ export default function Upload() {
     <div className="space-y-6">
       {/* Drop zone */}
       <div
+        /* The drop zone is a <div> with a click handler, so it was invisible to
+           the keyboard: no tab stop, no role, and the real <input type="file">
+           is hidden. Stating the role and handling Enter/Space makes it the
+           button it already looked like. */
+        role="button"
+        tabIndex={0}
+        aria-label="Choose files to upload"
+        aria-busy={busy.files}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          if (!busy.files) inputRef.current?.click();
+        }}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -153,7 +166,7 @@ export default function Upload() {
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         onClick={() => !busy.files && inputRef.current?.click()}
-        className={`rounded-xl border-2 border-dashed p-10 text-center transition ${
+        className={`rounded-xl border-2 border-dashed p-10 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-espresso-400 ${
           busy.files ? "cursor-wait" : "cursor-pointer"
         } ${
           dragging
@@ -177,7 +190,11 @@ export default function Upload() {
 
       {/* URL ingest */}
       <div className="flex gap-2">
+        <label htmlFor="ingest-url" className="sr-only">
+          Repository or portfolio URL
+        </label>
         <input
+          id="ingest-url"
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -196,7 +213,11 @@ export default function Upload() {
 
       {/* Written response — for achievements with no document behind them. */}
       <div className="space-y-2">
+        <label htmlFor="written-entry" className="sr-only">
+          Write an achievement that has no document
+        </label>
         <textarea
+          id="written-entry"
           value={entry}
           onChange={(e) => setEntry(e.target.value)}
           onKeyDown={(e) => {
@@ -220,11 +241,7 @@ export default function Upload() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      <ErrorBanner message={error} />
 
       {/* Results — pending skeletons slot in at the top as each item resolves. */}
       {(pending.length > 0 || results.length > 0) && (

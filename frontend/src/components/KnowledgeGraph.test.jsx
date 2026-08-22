@@ -248,3 +248,81 @@ describe("<KnowledgeGraph /> sizing", () => {
     });
   });
 });
+
+describe("reaching the graph without a pointer", () => {
+  function stubGraph() {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: "doc_a",
+            type: "document",
+            category: "Projects",
+            label: "ML Pipeline",
+            effective_date: "2024-06",
+            date_source: "extracted",
+          },
+          { id: "skill_py", type: "skill", label: "Python" },
+        ],
+        edges: [{ source: "doc_a", target: "skill_py", relation_type: "skill_used_in" }],
+      }),
+    });
+  }
+
+  it("gives every node a tab stop and a spoken label", async () => {
+    // The graph is the view this app is judged on, and it was pointer-only: a
+    // bare <g> is not focusable, has no role, and announces nothing.
+    stubGraph();
+    render(<KnowledgeGraph />);
+
+    const node = await screen.findByRole("button", { name: /ML Pipeline/ });
+
+    expect(node.getAttribute("tabindex")).toBe("0");
+    // The label carries what the tooltip shows on hover — category and date —
+    // because hover is exactly what a keyboard user does not have.
+    expect(node.getAttribute("aria-label")).toContain("Projects");
+    expect(node.getAttribute("aria-label")).toContain("2024-06");
+  });
+
+  it("opens a node on Enter", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    stubGraph();
+    render(<KnowledgeGraph />);
+
+    const node = await screen.findByRole("button", { name: /ML Pipeline/ });
+    node.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(await screen.findByRole("dialog", { name: /ML Pipeline/ })).toBeTruthy();
+  });
+
+  it("closes the panel on Escape and gives focus back to the node", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    stubGraph();
+    render(<KnowledgeGraph />);
+
+    const node = await screen.findByRole("button", { name: /ML Pipeline/ });
+    node.focus();
+    await userEvent.keyboard("{Enter}");
+    await screen.findByRole("dialog");
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Without the restore, focus lands on <body> and the tab journey restarts.
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /ML Pipeline/ })
+    );
+  });
+
+  it("describes the whole surface, which is otherwise an unlabelled picture", async () => {
+    stubGraph();
+    const { container } = render(<KnowledgeGraph />);
+
+    await waitFor(() => expect(container.querySelector("svg.touch-none")).toBeTruthy());
+    const surface = container.querySelector("svg.touch-none");
+
+    expect(surface.getAttribute("aria-label")).toMatch(/nodes/);
+  });
+});

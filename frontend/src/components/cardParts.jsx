@@ -303,3 +303,25 @@ export function CardShell({ children }) {
     </div>
   );
 }
+
+/**
+ * The failure banner every view shows — one component, not four copies.
+ *
+ * `role="alert"` is the part that was missing everywhere: Search, Upload,
+ * Timeline and the graph each rendered the same red box with the same classes,
+ * and none of them announced anything. A screen-reader user asked a question,
+ * got an error, and heard silence.
+ *
+ * Renders nothing for an empty message, so callers can pass state straight in.
+ */
+export function ErrorBanner({ message }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+    >
+      {message}
+    </div>
+  );
+}
