@@ -76,21 +76,31 @@ def test_table_covers_every_demo_text():
     )
 
 
-def test_table_covers_both_embedding_call_sites():
-    """Chunks alone are not enough — the graph embeds whole documents too.
+def test_table_covers_the_indexing_call_site():
+    """Every `chunk_text` window the seed writes has a shipped vector."""
+    from seed.seed_demo import DOCS
 
-    `build_graph` calls `embeddings.query(raw_text)` per document on every graph
-    read. Precomputing only the `chunk_text` windows would fix the seed and leave
-    the graph paying ~37s, which is over a third of the original complaint.
+    table = precomputed.vectors_for(embeddings.MODEL_NAME)
+    for doc in DOCS:
+        for chunk in embeddings.chunk_text(doc["raw_text"], doc["title"]):
+            assert precomputed.key(chunk) in table, f"no chunk vector for {doc['id']}"
+
+
+def test_table_carries_no_whole_document_vectors():
+    """The graph stopped embedding whole documents, so the table stopped shipping them.
+
+    `build_graph` used to call `embeddings.query(raw_text)` per document on every
+    graph read, and the table had to cover those strings or the graph paid ~37s.
+    It now looks neighbours up by id against the vectors already in the store
+    (`embeddings.neighbors_of_document`) and embeds nothing at all. Keeping the
+    entries would not be *wrong* — a table only ever makes things faster — but it
+    would be 10 dead vectors, and this asserts the two facts stay in step.
     """
     from seed.seed_demo import DOCS
 
     table = precomputed.vectors_for(embeddings.MODEL_NAME)
     for doc in DOCS:
-        whole = doc["raw_text"].strip()
-        assert precomputed.key(whole) in table, f"no graph-query vector for {doc['id']}"
-        for chunk in embeddings.chunk_text(doc["raw_text"], doc["title"]):
-            assert precomputed.key(chunk) in table, f"no chunk vector for {doc['id']}"
+        assert precomputed.key(doc["raw_text"].strip()) not in table
 
 
 def test_shipped_vectors_are_normalized_and_the_right_shape():

@@ -70,6 +70,12 @@ MAX_CHUNKS = 40
 _QUERY_POOL_FACTOR = 5
 _QUERY_POOL_MIN = 20
 
+# How many of a document's own chunks to use as neighbour probes. Every extra
+# probe is another HNSW search, and the head of a document already dominates its
+# similarity to anything else; 8 covers ~7k characters, well past a certificate
+# or a resume, at a fraction of the cost of probing all MAX_CHUNKS.
+_NEIGHBOR_CHUNK_CAP = 8
+
 # Embed in small batches rather than handing the backend all MAX_CHUNKS at once.
 # The batch is padded to its longest member and held in memory as one tensor, so
 # a single 40-chunk shot peaked at 500 MB against Render free's 512 MB ceiling;
@@ -291,6 +297,37 @@ def delete_document(doc_id: str) -> None:
 # --- Query ----------------------------------------------------------------
 
 
+def _collapse(
+    metas: list[dict[str, Any]],
+    dists: list[float],
+    into: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Fold one Chroma result row into {doc_id: best hit for that document}.
+
+    Several chunks of one document can match; only the closest is kept. `into`
+    lets a caller accumulate across several result rows — one per query vector —
+    which is what the neighbour lookup below does.
+    """
+    best = into if into is not None else {}
+    for meta, dist in zip(metas, dists):
+        doc_id = meta.get("doc_id")
+        if not doc_id:
+            continue
+        score = 1.0 - dist  # cosine distance -> similarity
+        current = best.get(doc_id)
+        if current is None or score > current["score"]:
+            best[doc_id] = {
+                "doc_id": doc_id,
+                "score": score,
+                "chunk_index": meta.get("chunk_index"),
+            }
+    return best
+
+
+def _ranked(best: dict[str, dict[str, Any]], k: int) -> list[dict[str, Any]]:
+    return sorted(best.values(), key=lambda r: r["score"], reverse=True)[:k]
+
+
 def query(query_text: str, *, user_id: str, k: int = 5) -> list[dict[str, Any]]:
     """Semantic search. Returns up to k distinct documents, best-scoring first.
 
@@ -317,23 +354,52 @@ def query(query_text: str, *, user_id: str, k: int = 5) -> list[dict[str, Any]]:
 
     metas = (result.get("metadatas") or [[]])[0]
     dists = (result.get("distances") or [[]])[0]
+    return _ranked(_collapse(metas, dists), k)
+
+
+def neighbors_of_document(
+    doc_id: str, *, user_id: str, k: int = 5
+) -> list[dict[str, Any]]:
+    """The k documents most similar to `doc_id`, using its **stored** vectors.
+
+    **Why this exists rather than `query(document.raw_text)`.** The graph is
+    computed on read (`graph/builder.py`), so embedding each document's text
+    again on every graph load meant N model forward passes per page view — on an
+    instance measured at ~1/40th this machine's CPU (see `ai/precomputed.py`).
+    The vectors are already in the store from indexing, so a neighbour lookup
+    needs **no inference at all**: fetch them back and query with them.
+
+    It is also more faithful than the text path was. The model truncates at
+    ~256 tokens, so embedding a whole `raw_text` compared documents by their
+    *heads* only, while indexing had already chunked them — the graph and search
+    disagreed about what a document was. Querying with the document's own chunks
+    compares like with like.
+
+    Returns the same `{doc_id, score, chunk_index}` shape as `query`, with the
+    document itself removed. Empty when the document has no indexed chunks (no
+    text, or not yet synced) — the caller draws no edges rather than failing.
+    """
+    collection = _get_collection()
+    got = collection.get(where={"doc_id": doc_id}, include=["embeddings"])
+    raw = got.get("embeddings")
+    vectors = [] if raw is None else [list(v) for v in raw][:_NEIGHBOR_CHUNK_CAP]
+    if not vectors:
+        return []
+
+    pool = max(k * _QUERY_POOL_FACTOR, _QUERY_POOL_MIN)
+    result = collection.query(
+        query_embeddings=vectors,
+        n_results=pool,
+        where={"user_id": user_id},
+    )
 
     best: dict[str, dict[str, Any]] = {}
-    for meta, dist in zip(metas, dists):
-        doc_id = meta.get("doc_id")
-        if not doc_id:
-            continue
-        score = 1.0 - dist  # cosine distance -> similarity
-        current = best.get(doc_id)
-        if current is None or score > current["score"]:
-            best[doc_id] = {
-                "doc_id": doc_id,
-                "score": score,
-                "chunk_index": meta.get("chunk_index"),
-            }
-
-    ranked = sorted(best.values(), key=lambda r: r["score"], reverse=True)
-    return ranked[:k]
+    for metas, dists in zip(
+        result.get("metadatas") or [], result.get("distances") or []
+    ):
+        _collapse(metas, dists, into=best)
+    best.pop(doc_id, None)  # a document is not its own neighbour
+    return _ranked(best, k)
 
 
 # --- Rebuild / sync -------------------------------------------------------

@@ -527,12 +527,18 @@ def documents_with_skills(user_id: str = "demo") -> list[dict[str, Any]]:
     """Every document with its skill entities attached, for the relationship graph.
 
     Two queries, not N+1: one for the documents, one for all their skill rows,
-    joined in Python. `raw_text` is included because Module 3's similarity layer
-    embeds it; the set is bounded by the profile size, not by corpus scale.
+    joined in Python.
+
+    **No `raw_text`.** It used to be selected because the similarity layer
+    re-embedded it on every graph read; that layer now queries the vector store
+    by document id (`embeddings.neighbors_of_document`), so pulling the whole
+    corpus into memory per request bought nothing. Both remaining callers —
+    `graph.builder` and `ai.career_path._build_profile` — use only the title,
+    category and skills.
     """
     with get_connection() as conn:
         docs = conn.execute(
-            "SELECT id, category, title, raw_text FROM documents WHERE user_id = ?",
+            "SELECT id, category, title FROM documents WHERE user_id = ?",
             (user_id,),
         ).fetchall()
         skill_rows = conn.execute(
@@ -554,7 +560,6 @@ def documents_with_skills(user_id: str = "demo") -> list[dict[str, Any]]:
             "id": d["id"],
             "category": d["category"],
             "title": d["title"],
-            "raw_text": d["raw_text"],
             "skills": skills_by_doc.get(d["id"], []),
         }
         for d in docs

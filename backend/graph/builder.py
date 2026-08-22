@@ -8,8 +8,8 @@ Gemini call — which are persisted in their own table and merged in by
 
 Isolation: every source is scoped to `user_id` — `list_documents` and
 `documents_with_skills` filter by it, and the similarity query is filtered by it
-inside `embeddings.query`. A node for another user's document can therefore never
-enter the graph. This is asserted and mutation-tested in `test_graph_api`.
+inside `embeddings.neighbors_of_document`. A node for another user's document
+can therefore never enter the graph. This is asserted and mutation-tested in `test_graph_api`.
 """
 
 from __future__ import annotations
@@ -46,23 +46,29 @@ def _document_node(doc: dict[str, Any]) -> dict[str, Any]:
 def build_graph(
     user_id: str = "demo",
     *,
-    query_fn: Callable[..., list[dict[str, Any]]] | None = None,
+    neighbor_fn: Callable[..., list[dict[str, Any]]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Build `{nodes, edges}` for one user's documents and skills.
 
-    `query_fn` is the semantic-neighbour lookup, injected for testing; it
-    defaults to the real `embeddings.query`. The document/skill core is built
-    here; career-path nodes and their `leads_to` edges are merged in by the
-    career-path module, which owns the Gemini call that produces them.
+    `neighbor_fn` is the semantic-neighbour lookup, injected for testing; it
+    defaults to the real `embeddings.neighbors_of_document`. The document/skill
+    core is built here; career-path nodes and their `leads_to` edges are merged
+    in by the career-path module, which owns the Gemini call that produces them.
+
+    **It looks documents up by id, not by text, and that is the point.** This
+    used to hand each document's whole `raw_text` to `embeddings.query`, which
+    re-embedded the entire corpus on *every* graph read — N model forward passes
+    per page view, on an instance running at ~1/40th this machine's CPU. The
+    vectors are already in the store from indexing, so the neighbour lookup
+    reuses them and the graph now costs no inference at all.
     """
-    if query_fn is None:
+    if neighbor_fn is None:
         from ai import embeddings
 
-        query_fn = embeddings.query
+        neighbor_fn = embeddings.neighbors_of_document
 
     rich = database.list_documents(user_id=user_id, limit=500)
     with_skills = database.documents_with_skills(user_id=user_id)
-    text_by_id = {d["id"]: d.get("raw_text") or "" for d in with_skills}
     skills_by_id = {d["id"]: d.get("skills") or [] for d in with_skills}
 
     document_nodes = [_document_node(d) for d in rich]
@@ -73,10 +79,10 @@ def build_graph(
     )
 
     def neighbors_of(doc: dict[str, Any]) -> list[dict[str, Any]]:
-        text = text_by_id.get(doc["id"], "")
-        if not text.strip():
-            return []
-        return query_fn(text, user_id=user_id, k=_SIMILARITY_K)
+        # Empty for a document with no indexed chunks — one with no text, or one
+        # the store has not caught up with. `ensure_synced` on startup closes the
+        # second case; until then the document simply draws no similarity edges.
+        return neighbor_fn(doc["id"], user_id=user_id, k=_SIMILARITY_K)
 
     similarity_edges = relationship_engine.similarity_edges(rich, neighbors_of)
 

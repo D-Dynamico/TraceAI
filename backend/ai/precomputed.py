@@ -14,13 +14,17 @@ therefore knowable ahead of time, and shipping them turns those ~50s into a
 dict lookup. `seed/precompute_vectors.py` generates the file; a `model`-marked
 test asserts the shipped vectors still match what the live model produces.
 
-**What is covered.** Both places the demo profile embeds:
+**What is covered.** The one place the demo profile embeds:
+`embeddings.add_document` — one entry per `chunk_text` window, which also covers
+`ensure_synced()` re-indexing the demo after a free-tier restart wipes
+`data/chroma/`.
 
-* `embeddings.add_document` — one entry per `chunk_text` window, which also
-  covers `ensure_synced()` re-indexing the demo after a free-tier restart wipes
-  `data/chroma/`.
-* `graph.builder.build_graph` — one entry per document's full `raw_text`, which
-  it passes to `embeddings.query` for similarity edges on *every* graph read.
+There used to be a second: `graph.builder.build_graph` passed each document's
+whole `raw_text` to `embeddings.query` for similarity edges on *every* graph
+read, and this table was the only thing making that affordable. The builder now
+asks the store for the vectors it already holds
+(`embeddings.neighbors_of_document`) and embeds nothing, so those entries were
+dropped — the graph is fast for real uploads too, not just for the demo.
 
 Nothing else is precomputed, and nothing else should be: a real upload's text is
 unknown until it arrives, and a search query is unknown by definition. Those

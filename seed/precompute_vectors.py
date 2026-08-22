@@ -35,20 +35,19 @@ from seed.seed_demo import DOCS  # noqa: E402
 def demo_texts() -> list[str]:
     """Every string the demo profile hands to `embed_texts`, deduplicated.
 
-    Two call sites, both of which must be covered or the demo still stalls:
+    One call site: `embeddings.add_document` embeds each `chunk_text` window —
+    what `load_demo` writes, and what `ensure_synced` re-writes after a free-tier
+    restart wipes the Chroma store.
 
-    * `embeddings.add_document` embeds each `chunk_text` window — what
-      `load_demo` writes, and what `ensure_synced` re-writes after a free-tier
-      restart wipes the Chroma store.
-    * `graph.builder.build_graph` passes each document's whole `raw_text` to
-      `embeddings.query`, which strips it — on every single graph read, not just
-      after seeding. Mirror that `.strip()` exactly; a stray newline here is a
-      key that never matches.
+    **There used to be a second.** `graph.builder` passed each document's whole
+    `raw_text` to `embeddings.query` on every graph read, so the table had to
+    carry those strings too. The builder now looks neighbours up by document id
+    against vectors the store already holds, embedding nothing — so those
+    entries were dropped from the shipped table.
     """
     texts: list[str] = []
     for doc in DOCS:
         texts.extend(embeddings.chunk_text(doc["raw_text"], doc["title"]))
-        texts.append(doc["raw_text"].strip())
 
     seen: set[str] = set()
     return [t for t in texts if not (t in seen or seen.add(t))]
