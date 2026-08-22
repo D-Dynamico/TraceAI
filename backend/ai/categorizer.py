@@ -237,8 +237,7 @@ def categorize(text: str, filename: str = "") -> Categorization:
 
     try:
         model = _get_model()
-        _rate_limiter.wait()
-        response = model.generate_content(prompt)
+        response = gemini.generate(model, prompt, limiter=_rate_limiter)
         payload = _parse_response(response.text)
         result = Categorization.model_validate(payload)
     except CategorizationError as exc:

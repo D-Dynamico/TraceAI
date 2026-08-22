@@ -125,3 +125,69 @@ def build_model(generation_config: dict):
     import google.generativeai as genai
 
     return genai.GenerativeModel(settings.gemini_model, generation_config=generation_config)
+
+
+# A 429 the API asked us to wait out is worth waiting out, but not forever: past
+# this the caller degrades and the user gets a card they can retry by hand,
+# which beats an upload that hangs.
+MAX_RETRY_DELAY_SECONDS = 30.0
+
+_RETRY_DELAY_RE = re.compile(r"retry_delay\s*{\s*seconds:\s*(\d+)", re.IGNORECASE)
+
+
+def retry_after(exc: Exception) -> float | None:
+    """How long to wait before retrying `exc`, or None if retrying cannot help.
+
+    **Only the per-minute quota is retried.** A 429 carries a `quota_id` naming
+    which limit was hit, and the free tier has two: 5 requests per minute, which
+    clears in seconds, and 20 per *day*, which does not. Retrying the daily one
+    spends the wait and then a second doomed request out of a budget that is
+    already gone — so a payload naming the per-day quota returns None and the
+    caller degrades immediately, as it did before.
+
+    The delay comes from the API's own `retry_delay { seconds: N }` when present
+    (it is, on the 429s this free tier issues); otherwise the limiter's interval
+    is a safe stand-in, since that is the spacing the minute quota wants anyway.
+    """
+    text = f"{type(exc).__name__} {exc}".lower()
+    if "429" not in text and "resourceexhausted" not in text and "quota" not in text:
+        return None
+    if "perday" in text or "per day" in text:
+        return None
+
+    match = _RETRY_DELAY_RE.search(str(exc))
+    delay = float(match.group(1)) if match else rate_limiter._min_interval
+    return min(delay, MAX_RETRY_DELAY_SECONDS)
+
+
+def generate(model, payload, *, limiter: RateLimiter | None = None):
+    """Rate-limited `generate_content`, retried once on a per-minute 429.
+
+    Every Gemini call in this app goes through here. The retry exists because
+    the API tells us exactly how long to wait — `retry_delay { seconds: 14 }` —
+    and the four callers used to throw that away and degrade on the spot. At 5
+    RPM a burst of two calls (a scanned upload is Vision *then* categorization)
+    could trip the limit despite the spacing; one honest wait turns that into a
+    success instead of a document filed by filename guess.
+
+    One retry, never two: a second failure means the minute quota is genuinely
+    saturated or the daily one is gone, and the caller's degradation path is the
+    right answer then.
+
+    `limiter` is injectable because each caller aliases the shared limiter as a
+    module attribute their tests monkeypatch — passing it keeps that seam.
+    """
+    limiter = limiter or rate_limiter
+    limiter.wait()
+    try:
+        return model.generate_content(payload)
+    except Exception as exc:
+        delay = retry_after(exc)
+        if delay is None:
+            raise
+        logger.warning(
+            "Gemini rate-limited; retrying once in %.0fs: %s", delay, redact(exc)
+        )
+        time.sleep(delay)
+        limiter.wait()
+        return model.generate_content(payload)

@@ -171,8 +171,9 @@ def _generate(data: bytes, mime_type: str) -> str:
     degradation mapping around it are all reachable offline.
     """
     model = _get_model()
-    _rate_limiter.wait()
-    response = model.generate_content([PROMPT, {"mime_type": mime_type, "data": data}])
+    response = gemini.generate(
+        model, [PROMPT, {"mime_type": mime_type, "data": data}], limiter=_rate_limiter
+    )
     return (response.text or "").strip()
 
 

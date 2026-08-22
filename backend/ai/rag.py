@@ -165,8 +165,7 @@ def synthesize(query: str, docs: list[dict[str, Any]]) -> RagAnswer:
 
     try:
         model = _get_model()
-        _rate_limiter.wait()
-        response = model.generate_content(prompt)
+        response = gemini.generate(model, prompt, limiter=_rate_limiter)
     except Exception as exc:  # network, quota, safety block, SDK change
         reason = degradation.classify_exception(exc)
         logger.warning(
