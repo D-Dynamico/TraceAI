@@ -203,6 +203,37 @@ def _to_response(result: Categorization, upload_date: str) -> CategorizationResp
     )
 
 
+# Uploads are read in chunks so an over-size body is refused while it is still
+# arriving. `await file.read()` buffered the whole thing *first* and compared
+# afterwards, which meant the 413 could only fire once the memory had already
+# been spent — and the deploy target is a 512 MB instance with no auth in front
+# of it. Same shape as `ingestion/url_guard._read_capped`, which does this for
+# bodies coming the other way.
+_UPLOAD_CHUNK = 64 * 1024
+
+
+async def _read_capped(file: UploadFile) -> bytes:
+    """Buffer an upload, refusing anything over `settings.max_upload_bytes`.
+
+    The declared Content-Length is not consulted: it is client-controlled and
+    may be absent or a lie, so the only number trusted is the one counted while
+    reading. The cap is checked before each chunk is kept, so at most one chunk
+    beyond the limit is ever held.
+    """
+    limit = settings.max_upload_bytes
+    buffer = bytearray()
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK)
+        if not chunk:
+            return bytes(buffer)
+        if len(buffer) + len(chunk) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds max size of {limit} bytes.",
+            )
+        buffer.extend(chunk)
+
+
 @router.post("/upload", response_model=ExtractionResponse)
 async def upload_file(
     file: UploadFile = File(...), user_id: str = Depends(current_user)
@@ -214,13 +245,7 @@ async def upload_file(
             detail=f"Unsupported file type: {Path(filename).suffix or '(none)'}",
         )
 
-    # Read with a size guard.
-    contents = await file.read()
-    if len(contents) > settings.max_upload_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds max size of {settings.max_upload_bytes} bytes.",
-        )
+    contents = await _read_capped(file)
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file.")
 

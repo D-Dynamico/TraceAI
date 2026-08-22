@@ -73,6 +73,44 @@ def test_rejects_oversized_upload(client, monkeypatch):
     assert upload(client, "big.txt", b"x" * 50).status_code == 413
 
 
+def test_an_oversized_upload_is_refused_while_it_is_still_arriving(client, monkeypatch):
+    """The 413 must fire *before* the body is buffered, not after.
+
+    `await file.read()` read the whole thing and compared afterwards, so the cap
+    documented the limit without enforcing it: the memory was already spent by
+    the time the status was chosen. On a 512 MB instance with no auth in front
+    of it, that is a one-request kill.
+
+    Asserted by counting bytes actually read: the reader must stop within a
+    chunk of the limit rather than consuming the full body.
+    """
+    from config import settings
+    from routes import upload as upload_route
+
+    monkeypatch.setattr(settings, "max_upload_bytes", 1024)
+    monkeypatch.setattr(upload_route, "_UPLOAD_CHUNK", 256)
+
+    read_total = 0
+    real_read = upload_route._read_capped
+
+    async def counting(file):
+        class _Counting:
+            async def read(self, size=-1):
+                nonlocal read_total
+                chunk = await file.read(size)
+                read_total += len(chunk)
+                return chunk
+
+        return await real_read(_Counting())
+
+    monkeypatch.setattr(upload_route, "_read_capped", counting)
+
+    resp = upload(client, "big.txt", b"x" * (2 * 1024 * 1024))
+
+    assert resp.status_code == 413
+    assert read_total <= 1024 + 256  # the limit plus at most one chunk
+
+
 def test_rejects_bad_url_scheme(client):
     resp = client.post("/api/ingest-url", json={"url": "ftp://example.com"})
 
