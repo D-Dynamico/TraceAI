@@ -32,17 +32,19 @@ export default function QuotaNotice() {
         </span>
         <p>
           Runs on the <strong className="font-semibold text-sand-700">free
-          Gemini tier</strong> —{" "}
+          Gemini tier</strong>, with{" "}
           <strong className="font-semibold text-sand-700">
-            {RPM} requests per minute
+            {RPM} AI requests per minute
           </strong>{" "}
           and{" "}
           <strong className="font-semibold text-sand-700">
             {RPD} per day
           </strong>
-          . Categorization, career paths, and AI answers degrade gracefully
-          rather than fail once that is spent, and nothing you have already
-          uploaded is lost. Loading the demo profile uses no AI calls at all.
+          . If the AI limit is reached, the app still works. Your uploaded
+          information remains safe, while AI-powered features such as
+          categorization, career suggestions, and answers may be temporarily
+          unavailable. You can also load the demo profile anytime without using
+          any AI requests.
         </p>
       </div>
     </aside>
