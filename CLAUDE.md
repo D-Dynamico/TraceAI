@@ -29,7 +29,7 @@ cd backend
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload --port 8000
 
 cd frontend && npm run dev                       # Vite on :5173
-cd frontend && npm test                          # 155 vitest tests
+cd frontend && npm test                          # 156 vitest tests
 cd frontend && npm run lint                      # eslint, must be clean
 ```
 

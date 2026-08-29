@@ -6,7 +6,24 @@ import { seedDemo } from "../api/client";
 // calls `onLoaded` so the host view refetches and the timeline/graph fill in —
 // a visible change, not a silent no-op. Idempotent on the backend, but the
 // button disables while in flight so an impatient double-click can't race.
-export default function LoadDemoButton({ onLoaded, className = "" }) {
+//
+// Defaults to the *secondary* style on purpose. The demo is a fallback for a
+// visitor with nothing to upload, not the thing the product is for; rendering
+// it as the only filled button on an empty screen made the sample data read as
+// the intended path. `variant="primary"` stays available for a surface where
+// seeding genuinely is the main action.
+const VARIANTS = {
+  primary:
+    "bg-espresso-600 text-white shadow-sm hover:bg-espresso-700",
+  secondary:
+    "border border-sand-300 bg-paper text-sand-600 hover:border-sand-400 hover:text-sand-900",
+};
+
+export default function LoadDemoButton({
+  onLoaded,
+  className = "",
+  variant = "secondary",
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -28,11 +45,15 @@ export default function LoadDemoButton({ onLoaded, className = "" }) {
       <button
         onClick={handleClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 rounded-lg bg-espresso-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-espresso-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+          VARIANTS[variant] ?? VARIANTS.secondary
+        }`}
       >
         {loading && (
+          // currentColor throughout, so the spinner follows whichever variant
+          // is in use rather than being hard-coded white.
           <svg
-            className="h-4 w-4 animate-spin text-white"
+            className="h-4 w-4 animate-spin"
             viewBox="0 0 24 24"
             fill="none"
             aria-hidden="true"

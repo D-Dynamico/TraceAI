@@ -94,6 +94,27 @@ describe("Timeline empty state", () => {
     expect(screen.getByText(/your timeline is empty/i)).toBeInTheDocument();
   });
 
+  // The empty state used to make the demo the only filled button, which read
+  // as "the sample data is the point". Uploading is the product; pin the order.
+  it("leads with uploading and routes there, keeping the demo secondary", async () => {
+    vi.spyOn(client, "listDocuments").mockResolvedValue([]);
+    const onNavigate = vi.fn();
+    render(<Timeline onNavigate={onNavigate} />);
+
+    const upload = await screen.findByRole("button", { name: /add your first document/i });
+    const demo = screen.getByRole("button", { name: /load demo profile/i });
+    // Upload comes first in the DOM, so it is what a reader hits first.
+    expect(upload.compareDocumentPosition(demo)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // Only the upload CTA carries the filled primary style.
+    expect(upload.className).toMatch(/bg-espresso-600/);
+    expect(demo.className).not.toMatch(/bg-espresso-600/);
+
+    await userEvent.click(upload);
+    expect(onNavigate).toHaveBeenCalledWith("upload");
+  });
+
   it("filters to a single category when its chip is clicked", async () => {
     vi.spyOn(client, "listDocuments").mockResolvedValue([
       doc("proj", { effective_date: "2023-05", category: "Projects" }),

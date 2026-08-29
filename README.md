@@ -231,7 +231,7 @@ knowledge graph, career-path inference, the timeline and the demo seed are all l
 
 **465 backend tests offline** (plus 9 real-HTTP, 7 live-API and 3 real-embedding, deselected
 by default) and
-**155 frontend tests**, all green. Security- and correctness-critical assertions are
+**156 frontend tests**, all green. Security- and correctness-critical assertions are
 **validated by mutation** — break the guard, confirm the right test fails, restore. Two of
 the first eight were hollow and looked fine in a green run; that is why the rule exists.
 

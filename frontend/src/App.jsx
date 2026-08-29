@@ -21,10 +21,10 @@ export default function App() {
           view === "graph" ? "max-w-5xl" : "max-w-3xl"
         }`}
       >
-        {view === "timeline" && <Timeline />}
+        {view === "timeline" && <Timeline onNavigate={setView} />}
         {view === "search" && <Search />}
         {view === "upload" && <Upload />}
-        {view === "graph" && <KnowledgeGraph />}
+        {view === "graph" && <KnowledgeGraph onNavigate={setView} />}
       </main>
       {/* Below the view, not above it: the ceiling is context a reviewer should
           have, but it is not what any screen is about. Kept at reading width

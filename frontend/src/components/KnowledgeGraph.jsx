@@ -131,7 +131,7 @@ function GraphSkeleton() {
   );
 }
 
-export default function KnowledgeGraph() {
+export default function KnowledgeGraph({ onNavigate }) {
   const [data, setData] = useState(null); // null = loading
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
@@ -397,15 +397,24 @@ export default function KnowledgeGraph() {
       <div className="rounded-xl border border-dashed border-sand-300 bg-paper px-6 py-16 text-center">
         <p className="text-sm font-medium text-sand-600">Your graph is empty</p>
         <p className="mt-1 text-xs text-sand-500">
-          Head to <span className="font-medium">Upload</span> to add documents —
-          the graph draws their skills, similarities, and career paths as they
-          connect.
+          Add documents and the graph draws their skills, similarities, and
+          career paths as they connect.
         </p>
-        <div className="mt-6 flex flex-col items-center gap-2">
-          <LoadDemoButton onLoaded={load} />
-          <p className="text-xs text-sand-500">
-            or load a sample profile to see the graph light up
-          </p>
+        {/* Same hierarchy as the timeline's empty state: the real action is
+            filled, the demo is the quiet fallback below it. */}
+        <div className="mt-6 flex flex-col items-center gap-3">
+          <button
+            onClick={() => onNavigate?.("upload")}
+            className="rounded-lg bg-espresso-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-espresso-700"
+          >
+            Add your first document
+          </button>
+          <div className="flex flex-col items-center gap-1">
+            <p className="text-xs text-sand-500">
+              Nothing to hand? Explore a sample profile instead.
+            </p>
+            <LoadDemoButton onLoaded={load} />
+          </div>
         </div>
       </div>
     );
