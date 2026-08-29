@@ -26,7 +26,7 @@ from identity import current_user
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from seed.seed_demo import load_demo  # noqa: E402
+from seed.seed_demo import clear_demo, load_demo  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,11 @@ class SeedResponse(BaseModel):
     user_id: str
 
 
+class ClearResponse(BaseModel):
+    cleared: int
+    user_id: str
+
+
 @router.post("/seed-demo", response_model=SeedResponse)
 async def seed_demo(user_id: str = Depends(current_user)) -> SeedResponse:
     # Seeds into the *caller's* dataset, so one reviewer loading the demo
@@ -45,3 +50,17 @@ async def seed_demo(user_id: str = Depends(current_user)) -> SeedResponse:
     result = await run_in_threadpool(load_demo, user_id)
     logger.info("Seeded demo profile: %s documents", result["seeded"])
     return SeedResponse(**result)
+
+
+@router.delete("/seed-demo", response_model=ClearResponse)
+async def clear_demo_profile(user_id: str = Depends(current_user)) -> ClearResponse:
+    """Undo the seed for the caller, putting them back on the empty state.
+
+    Deletes only `demo-*` rows (see `clear_demo`), so a reviewer who tried the
+    demo and then uploaded something of their own keeps the upload. Not a
+    "delete everything" button, deliberately — nothing here can destroy a real
+    document.
+    """
+    cleared = await run_in_threadpool(clear_demo, user_id)
+    logger.info("Cleared demo profile: %s documents", cleared)
+    return ClearResponse(cleared=cleared, user_id=user_id)

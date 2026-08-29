@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listDocuments } from "../api/client";
 import { CATEGORY_COLORS, categoryColor } from "../categories";
 import { useColdStart } from "./ColdStartNotice";
+import DemoNotice from "./DemoNotice";
 import LoadDemoButton from "./LoadDemoButton";
 import TimelineEntry from "./TimelineEntry";
 import { ErrorBanner } from "./cardParts";
@@ -57,6 +58,11 @@ export default function Timeline({ onNavigate }) {
     // sessions regardless of upload order.
     return Object.keys(CATEGORY_COLORS).filter((c) => present.has(c));
   }, [docs]);
+
+  const hasDemo = useMemo(
+    () => (docs ?? []).some((d) => typeof d.id === "string" && d.id.startsWith("demo-")),
+    [docs],
+  );
 
   const groups = useMemo(() => {
     if (!docs) return [];
@@ -148,6 +154,13 @@ export default function Timeline({ onNavigate }) {
 
   return (
     <div className="space-y-5">
+      {/* Above the controls, not inside them: it says what this whole timeline
+          is, and its inline confirm needs room the filter row cannot give
+          without shoving the sort toggle sideways. Rendered only when the demo
+          is actually loaded — `demo-` is the id prefix the seed stamps, and the
+          backend clears by that same prefix. */}
+      {hasDemo && <DemoNotice onCleared={load} />}
+
       {/* Filter chips + order toggle */}
       <div className="flex flex-wrap items-center gap-2">
         {["All", ...categories].map((cat) => (
@@ -177,6 +190,7 @@ export default function Timeline({ onNavigate }) {
           {newestFirst ? "Newest first ↓" : "Oldest first ↑"}
         </button>
       </div>
+
 
       {/* The spine: a single vertical rule the year groups and dots sit on. */}
       <div className="border-l border-sand-200 pl-2">

@@ -432,7 +432,7 @@ def scoped_id(user_id: str, doc_id: str) -> str:
     constants.** Once every visitor got their own dataset, that combination
     meant only the first visitor could ever load the demo: the second one's
     insert collided on `demo-python-cert` and the whole request 500'd, because
-    `_clear_demo` correctly deletes only the *caller's* rows and so never
+    `clear_demo` correctly deletes only the *caller's* rows and so never
     cleared the row in the way. On the deployed site that is every visitor after
     the first — masked only by the ephemeral disk, which resets the count to
     zero on each deploy.
@@ -441,18 +441,22 @@ def scoped_id(user_id: str, doc_id: str) -> str:
     id stays a fixed length whatever the id is, and derived rather than random so
     re-seeding the same visitor still replaces their rows instead of duplicating
     them. The `demo-` prefix is kept because that is what marks a row as seeded
-    (`_clear_demo`, and the API's own "is this the demo profile?" checks).
+    (`clear_demo`, and the API's own "is this the demo profile?" checks).
     """
     tag = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8]
     return f"demo-{tag}-{doc_id.removeprefix('demo-')}"
 
 
-def _clear_demo(user_id: str) -> None:
-    """Remove previously seeded demo documents so a re-run is idempotent.
+def clear_demo(user_id: str) -> int:
+    """Remove previously seeded demo documents. Returns how many were removed.
 
     Scoped to `demo-*` ids only — a reviewer who uploaded their own documents
     (which get random ids) keeps them; only this seed's rows are replaced.
     Embeddings are cleared per doc first, then the SQLite rows in one pass.
+
+    Public because it is two things at once: `load_demo`'s idempotency step, and
+    the whole of DELETE /api/seed-demo — the "Clear demo" button needs exactly
+    this and nothing more.
     """
     with database.get_connection() as conn:
         rows = conn.execute(
@@ -471,6 +475,8 @@ def _clear_demo(user_id: str) -> None:
     for doc_id in ids:
         embeddings.delete_document(doc_id)
 
+    return len(ids)
+
 
 def load_demo(user_id: str = USER) -> dict[str, object]:
     """Seed the demo profile. Returns {"seeded": n, "user_id": ...}.
@@ -480,7 +486,7 @@ def load_demo(user_id: str = USER) -> dict[str, object]:
     """
     settings.ensure_dirs()
     database.init_db()
-    _clear_demo(user_id)
+    clear_demo(user_id)
 
     for doc in DOCS:
         raw = doc["raw_text"]

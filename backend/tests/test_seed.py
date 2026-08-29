@@ -10,6 +10,7 @@ concern, not tested here.
 
 from __future__ import annotations
 
+from ai import embeddings
 from seed.seed_demo import DOCS, load_demo
 
 
@@ -108,7 +109,7 @@ def test_a_second_visitor_can_also_load_the_demo(client):
 
     `documents.id` is a global primary key and the seed's ids were fixed
     constants, so the second visitor's insert collided on `demo-python-cert`
-    and the endpoint 500'd — `_clear_demo` deletes only the *caller's* rows, so
+    and the endpoint 500'd — `clear_demo` deletes only the *caller's* rows, so
     nothing ever cleared the row in the way. On the deployed site that is every
     visitor after the first; the ephemeral disk hid it by resetting the count on
     each deploy. Every test here seeded exactly one user, which is why it lived.
@@ -163,3 +164,66 @@ def test_one_visitors_graph_holds_only_their_own_documents(client):
 
     assert alice_nodes and bob_nodes
     assert alice_nodes.isdisjoint(bob_nodes)
+
+
+# --- Clearing the demo -------------------------------------------------------
+#
+# The demo is per-visitor and persists in that visitor's dataset, so once
+# someone loads it they never see the empty state again. These pin the way back.
+
+
+def test_clear_demo_empties_the_timeline(client):
+    client.post("/api/seed-demo")
+
+    resp = client.delete("/api/seed-demo")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"cleared": len(DOCS), "user_id": "demo"}
+    assert client.get("/api/documents").json() == []
+
+
+def test_clear_demo_keeps_a_users_own_upload(client):
+    """Scoped to demo-* ids: this is not a "delete everything" button."""
+    client.post("/api/seed-demo")
+    uploaded = client.post(
+        "/api/upload",
+        files={"file": ("mine.txt", b"my own document", "text/plain")},
+    ).json()["id"]
+
+    client.delete("/api/seed-demo")
+
+    ids = {d["id"] for d in client.get("/api/documents").json()}
+    assert ids == {uploaded}
+
+
+def test_clear_demo_touches_only_the_caller(client):
+    _seed_as(client, ALICE)
+    _seed_as(client, BOB)
+
+    client.delete("/api/seed-demo", headers={"X-User-Id": ALICE})
+
+    assert client.get("/api/documents", headers={"X-User-Id": ALICE}).json() == []
+    assert len(client.get("/api/documents", headers={"X-User-Id": BOB}).json()) == len(DOCS)
+
+
+def test_clear_demo_on_an_empty_dataset_is_a_no_op(client):
+    resp = client.delete("/api/seed-demo")
+    assert resp.status_code == 200
+    assert resp.json()["cleared"] == 0
+
+
+def test_clear_demo_also_drops_the_embeddings(client):
+    """Asserted on the vector store directly, not through /api/search.
+
+    Search reads the SQLite rows the vectors point at, so it goes quiet the
+    moment the rows are deleted whether or not the vectors went with them — a
+    search-level assertion here passes with the embedding cleanup removed
+    (mutation-checked). The leak it would miss is real: `reindex`/`ensure_synced`
+    walk the store, so orphaned vectors survive a restart.
+    """
+    client.post("/api/seed-demo")
+    assert embeddings.indexed_count() > 0
+
+    client.delete("/api/seed-demo")
+
+    assert embeddings.indexed_count() == 0

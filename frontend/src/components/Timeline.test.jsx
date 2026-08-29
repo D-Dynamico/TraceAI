@@ -130,6 +130,65 @@ describe("Timeline empty state", () => {
   });
 });
 
+// The demo persists per visitor, so a seeded reviewer would otherwise never see
+// the empty state again. The clear control is only meaningful when demo rows are
+// actually present.
+describe("Timeline clear-demo control", () => {
+  it("offers Clear demo only when demo documents are loaded", async () => {
+    vi.spyOn(client, "listDocuments").mockResolvedValue([
+      doc("demo-ab12cd34-python-cert", { effective_date: "2023-05" }),
+    ]);
+    render(<Timeline />);
+
+    expect(
+      await screen.findByRole("button", { name: /clear demo/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("stays hidden when the documents are the user's own", async () => {
+    vi.spyOn(client, "listDocuments").mockResolvedValue([
+      doc("9f3c1e", { effective_date: "2023-05" }),
+    ]);
+    render(<Timeline />);
+
+    await screen.findByText("9f3c1e");
+    expect(screen.queryByRole("button", { name: /clear demo/i })).toBeNull();
+  });
+
+  it("expanding the confirm does not move the sort toggle", async () => {
+    vi.spyOn(client, "listDocuments").mockResolvedValue([
+      doc("demo-ab12cd34-python-cert", { effective_date: "2023-05" }),
+    ]);
+    render(<Timeline />);
+
+    const clear = await screen.findByRole("button", { name: /clear demo/i });
+    const sort = screen.getByRole("button", { name: /newest first/i });
+    // Different rows, so the confirm has room to grow without pushing anything.
+    expect(clear.closest("div").contains(sort)).toBe(false);
+
+    await userEvent.click(clear);
+
+    // Same row, same right-anchoring class as before the click.
+    expect(screen.getByRole("button", { name: /newest first/i })).toBe(sort);
+    expect(sort.className).toMatch(/ml-auto/);
+  });
+
+  it("refetches after clearing, so the empty state comes back", async () => {
+    const list = vi
+      .spyOn(client, "listDocuments")
+      .mockResolvedValueOnce([doc("demo-ab12cd34-python-cert", { effective_date: "2023-05" })])
+      .mockResolvedValue([]);
+    vi.spyOn(client, "clearDemo").mockResolvedValue({ cleared: 10 });
+
+    render(<Timeline />);
+    await userEvent.click(await screen.findByRole("button", { name: /clear demo/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+
+    expect(await screen.findByText(/your timeline is empty/i)).toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+});
+
 // A cold start on the free instance can hold the first list request for tens of
 // seconds. The timeline hands over the Load Demo CTA once the wait is clearly
 // abnormal rather than making the user watch "Loading…" for it.

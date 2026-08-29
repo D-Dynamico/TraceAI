@@ -138,6 +138,13 @@ export async function seedDemo() {
   return handle(res);
 }
 
+// Undo the seed — removes only this visitor's demo-* documents, never their own
+// uploads (the scoping lives in the backend's clear_demo).
+export async function clearDemo() {
+  const res = await apiFetch(`/api/seed-demo`, { method: "DELETE" });
+  return handle(res);
+}
+
 export async function health() {
   const res = await apiFetch(`/api/health`);
   return handle(res);
