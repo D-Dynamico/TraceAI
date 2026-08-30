@@ -15,7 +15,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -179,6 +179,14 @@ async def _index_document(
 
     Off the event loop for CPU reasons (model inference), not rate limiting —
     embeddings are local and free, unlike the Gemini call above.
+
+    Scheduled as a `BackgroundTasks` job, so it runs *after* the response is
+    sent. Nothing in the response depends on it, and the failure story is
+    unchanged — an unindexed document is exactly what a raised exception here
+    already produced. The visible cost is that a search fired in the second or
+    two after an upload can miss the new document; the alternative was making
+    every upload wait on the model load (~3s warm, more on a cold free instance)
+    for a result the caller does not read.
     """
     try:
         chunks = await run_in_threadpool(
@@ -238,7 +246,9 @@ async def _read_capped(file: UploadFile) -> bytes:
 
 @router.post("/upload", response_model=ExtractionResponse)
 async def upload_file(
-    file: UploadFile = File(...), user_id: str = Depends(current_user)
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    user_id: str = Depends(current_user),
 ) -> ExtractionResponse:
     filename = file.filename or "unnamed"
     if not file_parser.is_supported(filename):
@@ -250,6 +260,14 @@ async def upload_file(
     contents = await _read_capped(file)
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file.")
+
+    # Load the embedding model in the background now, so it is ready by the time
+    # the response has been sent and the background index job runs. Started here
+    # rather than at startup because a demo-only session never needs the model
+    # (every demo vector is precomputed); started before extraction rather than
+    # after because the ~13s the Gemini call spends on the rate limiter is free
+    # wall clock to hide a ~3s load inside.
+    embeddings.prewarm()
 
     # Persist the original byte-for-byte, with a checksum verified on write.
     doc_id = uuid.uuid4().hex
@@ -351,9 +369,11 @@ async def upload_file(
             detail="File was stored successfully but could not be indexed.",
         ) from exc
 
-    # Embed for semantic search. Best-effort: the row is already persisted, so a
-    # failure here leaves the document searchable-later, not lost.
-    await _index_document(
+    # Embed for semantic search. Best-effort and after the response: the row is
+    # already persisted, so a failure here leaves the document searchable-later,
+    # not lost.
+    background.add_task(
+        _index_document,
         doc_id=doc_id, title=category_result.title, raw_text=result.text,
         user_id=user_id,
     )
@@ -378,7 +398,7 @@ async def upload_file(
 
 @router.post("/documents/{doc_id}/recategorize", response_model=CategorizationResponse)
 async def recategorize(
-    doc_id: str, user_id: str = Depends(current_user)
+    doc_id: str, background: BackgroundTasks, user_id: str = Depends(current_user)
 ) -> CategorizationResponse:
     """Re-run categorization over a document's preserved text (the retry path).
 
@@ -421,8 +441,9 @@ async def recategorize(
 
     # The title is prepended to each embedded chunk, so a changed title means the
     # vectors are stale — re-index. Best-effort, as on the ingest paths.
-    await _index_document(
-        doc_id=doc_id, title=result.title, raw_text=raw_text, user_id=user_id
+    background.add_task(
+        _index_document,
+        doc_id=doc_id, title=result.title, raw_text=raw_text, user_id=user_id,
     )
 
     upload_date = doc.get("upload_date") or storage.now_iso()
@@ -431,7 +452,7 @@ async def recategorize(
 
 @router.post("/documents/{doc_id}/reextract", response_model=ReExtractionResponse)
 async def reextract(
-    doc_id: str, user_id: str = Depends(current_user)
+    doc_id: str, background: BackgroundTasks, user_id: str = Depends(current_user)
 ) -> ReExtractionResponse:
     """Re-run *extraction* over the preserved original, then re-classify.
 
@@ -602,8 +623,9 @@ async def reextract(
         )
 
     # The text changed, so the vectors are stale — re-index. Best-effort.
-    await _index_document(
-        doc_id=doc_id, title=title, raw_text=result.text, user_id=user_id
+    background.add_task(
+        _index_document,
+        doc_id=doc_id, title=title, raw_text=result.text, user_id=user_id,
     )
 
     return ReExtractionResponse(
@@ -627,6 +649,7 @@ async def _categorize_and_store(
     text: str,
     filename: str,
     file_type: str,
+    background: BackgroundTasks,
     user_id: str = DEFAULT_USER,
     source_url: str = "",
     metadata: dict | None = None,
@@ -651,6 +674,7 @@ async def _categorize_and_store(
     """
     warnings: list[str] = []
     upload_date = storage.now_iso()
+    embeddings.prewarm()  # overlap the model load with the Gemini call below
 
     # categorize() never raises — worst case is a filename-based guess at
     # confidence 0.0. Blocks on network + the rate limiter, so keep it off the
@@ -701,8 +725,9 @@ async def _categorize_and_store(
 
     # Fileless documents (URL / text entry) embed the same way — they have
     # raw_text even without an original file. Best-effort, as above.
-    await _index_document(
-        doc_id=doc_id, title=result.title, raw_text=text, user_id=user_id
+    background.add_task(
+        _index_document,
+        doc_id=doc_id, title=result.title, raw_text=text, user_id=user_id,
     )
 
     return result, warnings, upload_date
@@ -710,7 +735,9 @@ async def _categorize_and_store(
 
 @router.post("/ingest-url", response_model=UrlIngestResponse)
 async def ingest_url(
-    payload: UrlIngestRequest, user_id: str = Depends(current_user)
+    payload: UrlIngestRequest,
+    background: BackgroundTasks,
+    user_id: str = Depends(current_user),
 ) -> UrlIngestResponse:
     # Scraping blocks on network I/O; keep it off the event loop.
     try:
@@ -743,6 +770,7 @@ async def ingest_url(
         # The page title is the best filename stand-in; the URL is the fallback.
         filename=result.title or result.url,
         file_type="url",
+        background=background,
         user_id=user_id,
         source_url=result.url,
         metadata={
@@ -772,7 +800,9 @@ async def ingest_url(
 
 @router.post("/ingest-text", response_model=TextIngestResponse)
 async def ingest_text(
-    payload: TextIngestRequest, user_id: str = Depends(current_user)
+    payload: TextIngestRequest,
+    background: BackgroundTasks,
+    user_id: str = Depends(current_user),
 ) -> TextIngestResponse:
     """Ingest a written response — an achievement with no supporting document."""
     try:
@@ -787,6 +817,7 @@ async def ingest_text(
         text=entry.text,
         filename=filename,
         file_type="text_entry",
+        background=background,
         user_id=user_id,
         metadata={"char_count": entry.char_count, "entered_manually": True},
     )

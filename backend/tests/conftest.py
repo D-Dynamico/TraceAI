@@ -155,6 +155,11 @@ def stub_embeddings(request, monkeypatch):
         return vectors
 
     monkeypatch.setattr(embeddings, "embed_texts", _fake)
+    # The ingest routes now kick off a background model load before embedding.
+    # `embed_texts` above never reaches `_get_model`, but prewarm calls it
+    # directly — so without this the offline suite would pay for the download
+    # this fixture exists to avoid, on a thread where the cost is invisible.
+    monkeypatch.setattr(embeddings, "prewarm", lambda: None)
 
 
 @pytest.fixture

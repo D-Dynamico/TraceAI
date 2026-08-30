@@ -114,6 +114,33 @@ def _get_model():
         return _model
 
 
+def prewarm() -> None:
+    """Start loading the embedding model in a background thread, if unloaded.
+
+    Ingestion embeds only *after* its Gemini call, and that call blocks on the
+    13s rate limiter — dead time the model load can hide inside, so an upload
+    pays for it in wall clock only once and only when nothing else was happening
+    anyway. Called from the ingest paths alone, which keeps `_get_model`'s
+    deferral intact: a demo-only session (every vector precomputed) still never
+    loads the model.
+
+    Fire-and-forget on purpose. `_get_model` is idempotent under its own lock, so
+    a real embed that arrives mid-load blocks on that same lock and gets the one
+    cached instance; if the load fails, it fails again in the foreground where
+    the caller can degrade as it always has.
+    """
+    if _model is not None:
+        return
+
+    def _load() -> None:
+        try:
+            _get_model()
+        except Exception:
+            logger.exception("Embedding model prewarm failed — will retry inline.")
+
+    threading.Thread(target=_load, name="embed-model-prewarm", daemon=True).start()
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts as normalized vectors, cosine-ready.
 

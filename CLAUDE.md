@@ -22,7 +22,7 @@ future reader would otherwise hit.
 ```bash
 # All backend commands run from backend/. Invoke the venv python directly.
 cd backend
-./.venv/Scripts/python.exe -m pytest -q          # 474 offline tests, ~1.5 min
+./.venv/Scripts/python.exe -m pytest -q          # 478 offline tests, ~1.5 min
 ./.venv/Scripts/python.exe -m pytest -m network  # 9 real-HTTP tests, ~7s
 ./.venv/Scripts/python.exe -m pytest -m live     # 7 live Gemini tests, ~1 min
 ./.venv/Scripts/python.exe -m pytest -m model    # 3 real-embedding tests, ~40s

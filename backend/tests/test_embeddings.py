@@ -9,7 +9,11 @@ test that needs real semantics carries the `model` marker.
 
 from __future__ import annotations
 
+import asyncio
 import math
+import threading
+import time
+from unittest import mock
 
 import pytest
 
@@ -197,3 +201,100 @@ def test_real_model_ranks_relevant_document_first():
     )
     hits = embeddings.query("deep learning and data science", user_id="demo", k=2)
     assert hits[0]["doc_id"] == "ml"
+
+
+# --- Model prewarm --------------------------------------------------------
+#
+# `conftest.stub_embeddings` replaces `embeddings.prewarm` module-wide so the
+# offline suite never loads the real model. These tests are about prewarm
+# itself, so they hold the real function, bound at import time — before that
+# autouse fixture runs.
+from ai.embeddings import prewarm as real_prewarm  # noqa: E402
+
+
+def test_prewarm_loads_the_model_without_blocking_the_caller(monkeypatch):
+    """The whole point: the caller returns immediately, the load happens anyway."""
+    started = threading.Event()
+    release = threading.Event()
+    loaded = threading.Event()
+
+    def _slow_load():
+        started.set()
+        release.wait(timeout=5)
+        loaded.set()
+
+    monkeypatch.setattr(embeddings, "_model", None)
+    monkeypatch.setattr(embeddings, "_get_model", _slow_load)
+
+    real_prewarm()
+    assert started.wait(timeout=5)
+    # The load is still in flight and prewarm has already returned — if it were
+    # called inline, control would not be here until `release` was set.
+    assert not loaded.is_set()
+
+    release.set()
+    assert loaded.wait(timeout=5)
+
+
+def test_prewarm_is_a_noop_once_the_model_is_loaded(monkeypatch):
+    calls = []
+    monkeypatch.setattr(embeddings, "_model", object())
+    monkeypatch.setattr(embeddings, "_get_model", lambda: calls.append(1))
+
+    real_prewarm()
+    time.sleep(0.05)  # a thread, had one been started, would have run by now
+    assert calls == []
+
+
+def test_prewarm_swallows_a_load_failure(monkeypatch):
+    """A failed prewarm must not kill the upload it was started from."""
+    failed = threading.Event()
+
+    def _boom():
+        failed.set()
+        raise RuntimeError("no model for you")
+
+    monkeypatch.setattr(embeddings, "_model", None)
+    monkeypatch.setattr(embeddings, "_get_model", _boom)
+
+    real_prewarm()  # must not raise
+    assert failed.wait(timeout=5)
+
+
+# --- Indexing runs after the response -------------------------------------
+
+
+def test_ingest_schedules_indexing_instead_of_awaiting_it():
+    """Embedding must not be on the request's critical path.
+
+    Asserted at the route function rather than through TestClient because the
+    test client runs background tasks before it hands the response back — which
+    is correct, and makes the two orderings indistinguishable from outside.
+    """
+    indexed = []
+
+    async def _record(**kwargs):
+        indexed.append(kwargs["doc_id"])
+
+    from fastapi import BackgroundTasks
+
+    from routes import upload as upload_routes
+
+    background = BackgroundTasks()
+    with mock.patch.object(upload_routes, "_index_document", _record):
+        response = asyncio.run(
+            upload_routes.ingest_text(
+                upload_routes.TextIngestRequest(
+                    text="Shipped the ingestion pipeline and cut its latency."
+                ),
+                background,
+                user_id="demo",
+            )
+        )
+        # Nothing embedded while the caller was waiting...
+        assert indexed == []
+        assert len(background.tasks) == 1
+        # ...but the job is queued, and it is this document's.
+        asyncio.run(background())
+
+    assert indexed == [response.id]
