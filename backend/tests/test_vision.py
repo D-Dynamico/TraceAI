@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import pytest
 
-from ai import vision
-from conftest import make_image, make_textless_pdf, upload
+from ai import categorizer, vision
+from conftest import combined_vision_response, make_image, make_textless_pdf, make_thin_text_pdf, upload
 from config import settings
 from db import database
 from ingestion import file_parser, ocr_handler
+from models.document import Categorization
 
 TRANSCRIPT = """CERTIFICATE OF COMPLETION
 Awarded to Dayanand for completing Deep Learning Specialization.
@@ -51,7 +52,15 @@ def calls(monkeypatch):
         recorded.append((mime_type, len(data)))
         return TRANSCRIPT
 
+    def _fake_combined(data: bytes, mime_type: str) -> str:
+        recorded.append((mime_type, len(data)))
+        return combined_vision_response(TRANSCRIPT)
+
+    # Both seams, one list. The ladder reaches `_generate_combined` and the
+    # transcript-only entry point reaches `_generate`, but either way it is one
+    # Gemini call — which is the thing every count here is asserting about.
     monkeypatch.setattr(vision, "_generate", _fake)
+    monkeypatch.setattr(vision, "_generate_combined", _fake_combined)
     return recorded
 
 
@@ -196,6 +205,7 @@ def test_never_raises_on_a_failed_call(
         raise exc
 
     monkeypatch.setattr(vision, "_generate", _raise)
+    monkeypatch.setattr(vision, "_generate_combined", _raise)
     path = tmp_path / "scan.png"
     path.write_bytes(make_image())
 
@@ -255,7 +265,7 @@ def test_the_ladder_falls_back_to_vision_when_tesseract_is_missing(
 
     result = ocr_handler.ocr_image(path)
 
-    assert result.text == TRANSCRIPT
+    assert result.text == TRANSCRIPT.strip()
     assert result.method == "vision"
     assert result.local_available is False
     assert len(calls) == 1
@@ -270,7 +280,7 @@ def test_a_scanned_pdf_reaches_vision_without_poppler(
 
     result = ocr_handler.ocr_pdf(path)
 
-    assert result.text == TRANSCRIPT
+    assert result.text == TRANSCRIPT.strip()
     assert result.method == "vision"
     assert calls[0][0] == "application/pdf"
 
@@ -285,7 +295,7 @@ def test_an_image_extraction_reports_the_rung_that_won(tmp_path, with_key, calls
 
     result = file_parser.extract_text(path)
 
-    assert result.text == TRANSCRIPT
+    assert result.text == TRANSCRIPT.strip()
     assert result.method == "vision"
     assert result.used_ocr is True
     assert result.char_count > 0
@@ -299,7 +309,7 @@ def test_a_scanned_pdf_extraction_reports_vision(tmp_path, with_key, calls, monk
 
     result = file_parser.extract_text(path)
 
-    assert result.text == TRANSCRIPT
+    assert result.text == TRANSCRIPT.strip()
     assert result.method == "vision"
 
 
@@ -335,7 +345,7 @@ def test_the_warning_distinguishes_a_quota_wall_from_a_missing_binary(
 
     monkeypatch.setattr(ocr_handler, "_tesseract_available", lambda: True)
     monkeypatch.setattr(ocr_handler, "_tesseract_image", lambda path: "")
-    monkeypatch.setattr(vision, "_generate", _raise)
+    monkeypatch.setattr(vision, "_generate_combined", _raise)
     path = tmp_path / "scan.png"
     path.write_bytes(make_image())
 
@@ -380,7 +390,7 @@ def test_an_upload_survives_a_failed_vision_call(
         raise RuntimeError("429 Resource has been exhausted (quota)")
 
     monkeypatch.setattr(ocr_handler, "_tesseract_available", lambda: False)
-    monkeypatch.setattr(vision, "_generate", _raise)
+    monkeypatch.setattr(vision, "_generate_combined", _raise)
 
     resp = upload(client, "certificate_scan.png", make_image(), "image/png")
 
@@ -392,3 +402,177 @@ def test_an_upload_survives_a_failed_vision_call(
     row = database.get_document(body["id"])
     assert row is not None
     assert client.get(f"/api/documents/{body['id']}/verify").json()["verified"] is True
+
+
+# --- One call instead of two ------------------------------------------------
+#
+# The scanned path used to spend two Gemini requests: this module for the
+# transcript, then `ai/categorizer.py` over it. On a host without Tesseract
+# that is every scan — ~20s of wall clock (two 13s limiter slots) and 10% of a
+# 20-request day for one upload. These pin the merge, and pin that it degrades
+# to the old two-call shape rather than to a worse result.
+
+
+@pytest.fixture
+def categorize_calls(monkeypatch):
+    """Record separate categorization calls. Each is 5% of the day's quota."""
+    calls: list[str] = []
+
+    def _fake(text: str, filename: str = ""):
+        calls.append(text)
+        return Categorization(
+            document_type="certificate",
+            category="Certifications",
+            title="Filename Guess",
+            date=None,
+            summary="From the second call.",
+            skills=[],
+            organizations=[],
+            people=[],
+            tags=[],
+            confidence=0.5,
+        )
+
+    monkeypatch.setattr(categorizer, "categorize", _fake)
+    import routes.upload as upload_route
+
+    monkeypatch.setattr(upload_route.categorizer, "categorize", _fake)
+    return calls
+
+
+def test_a_scanned_upload_spends_one_gemini_call_not_two(
+    client, with_key, calls, categorize_calls, monkeypatch
+):
+    """The whole point of the merge, measured in requests rather than seconds.
+
+    Wall clock is the symptom; the request count is the cause, and it is the one
+    that binds — the free tier allows 20 a day.
+    """
+    monkeypatch.setattr(ocr_handler, "_tesseract_available", lambda: False)
+
+    resp = upload(client, "certificate_scan.png", make_image(), "image/png")
+
+    assert resp.status_code == 200, resp.text
+    assert len(calls) == 1, "exactly one Vision call"
+    assert categorize_calls == [], "and no separate categorization call"
+
+    body = resp.json()
+    assert body["categorization"]["title"] == "Scanned Certificate"
+    assert body["categorization"]["summary"] == "A certificate read from a scan."
+
+    row = database.get_document(body["id"])
+    assert "CERTIFICATE OF COMPLETION" in row["raw_text"]
+    assert row["title"] == "Scanned Certificate"
+
+
+def test_an_unusable_classification_keeps_the_transcript_and_classifies_separately(
+    client, with_key, categorize_calls, monkeypatch
+):
+    """Half a good response is still worth the call that produced it.
+
+    The transcript is the half a second call cannot recover — it would need the
+    pixels again. So a response that transcribes but classifies badly keeps the
+    text and pays for the categorization the old way, which is exactly the
+    behaviour that existed before the merge.
+    """
+    monkeypatch.setattr(ocr_handler, "_tesseract_available", lambda: False)
+    monkeypatch.setattr(
+        vision, "_generate_combined",
+        # A transcript with an empty classification beside it. `Categorization`
+        # is deliberately forgiving — unknown values coerce rather than raise —
+        # so this, not a validation error, is what an unusable classification
+        # actually looks like: it is the bar `categorizer.categorize` holds its
+        # own responses to.
+        lambda data, mime_type: combined_vision_response(TRANSCRIPT, title="", summary=""),
+    )
+
+    resp = upload(client, "certificate_scan.png", make_image(), "image/png")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "CERTIFICATE OF COMPLETION" in body["text_preview"]
+    assert len(categorize_calls) == 1, "the classification half is retried separately"
+    assert "CERTIFICATE" in categorize_calls[0], "over the recovered text"
+    assert body["categorization"]["title"] == "Filename Guess"
+
+
+def test_an_unparseable_combined_response_degrades_like_any_other_failure(
+    tmp_path, with_key, monkeypatch
+):
+    """No transcript survives a response that is not JSON — it was inside it."""
+    monkeypatch.setattr(
+        vision, "_generate_combined", lambda data, mime_type: "I'm afraid I can't do that"
+    )
+    path = tmp_path / "scan.png"
+    path.write_bytes(make_image())
+
+    result = vision.extract_and_categorize(path)
+
+    assert result.text == ""
+    assert result.categorization is None
+    assert result.degraded.reason == "unreadable_response"
+    assert result.degraded.retryable is True
+
+
+def test_the_sentinel_still_holds_on_the_combined_call(tmp_path, with_key, monkeypatch):
+    """"Nothing legible" must not become the document's text here either.
+
+    The merge gave the model a second job, and a model with a summary to write
+    has a reason to describe a page it could not read. The sentinel is the guard
+    against that, so it is asserted on both call shapes.
+    """
+    monkeypatch.setattr(
+        vision, "_generate_combined",
+        lambda data, mime_type: combined_vision_response(vision.NO_TEXT_SENTINEL),
+    )
+    path = tmp_path / "blank.png"
+    path.write_bytes(make_image())
+
+    result = vision.extract_and_categorize(path)
+
+    assert result.text == ""
+    assert result.categorization is None, (
+        "a classification of a page with no text is invention, whatever it says"
+    )
+    assert result.degraded.reason == "no_text"
+
+
+def test_the_combined_call_keeps_the_guards_the_transcript_call_has(
+    tmp_path, with_key, monkeypatch
+):
+    """Both entry points share `_prepare`, so neither can drift past a guard."""
+    sent: list[str] = []
+    monkeypatch.setattr(
+        vision, "_generate_combined",
+        lambda data, mime_type: sent.append(mime_type) or combined_vision_response(TRANSCRIPT),
+    )
+    path = tmp_path / "huge.png"
+    path.write_bytes(b"x" * (vision.MAX_INLINE_BYTES + 1))
+
+    result = vision.extract_and_categorize(path)
+
+    assert result.degraded.reason == "too_large"
+    assert sent == [], "the size cap must fire before the call, not after"
+
+
+def test_a_native_plus_vision_pdf_does_not_reuse_the_scan_classification(
+    tmp_path, with_key, monkeypatch
+):
+    """A part-native PDF is stored as text layer + transcript combined.
+
+    Vision only ever saw the scanned half, so its classification does not
+    describe the document being stored. Classifying the combined text is worth
+    the call.
+    """
+    monkeypatch.setattr(ocr_handler, "_tesseract_available", lambda: False)
+    monkeypatch.setattr(
+        vision, "_generate_combined",
+        lambda data, mime_type: combined_vision_response(TRANSCRIPT),
+    )
+    path = tmp_path / "mixed.pdf"
+    path.write_bytes(make_thin_text_pdf())
+
+    result = file_parser.extract_text(path)
+
+    assert result.method == "native+vision"
+    assert result.categorization is None

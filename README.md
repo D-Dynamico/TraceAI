@@ -60,7 +60,8 @@ Gemini's free tier is **5 requests per minute and 20 per day.**
 
 Twenty calls a day is not a footnote; it is the binding constraint on the whole design:
 
-- A scanned upload costs **two** calls, so ~26s at the limiter's 13s spacing.
+- A scanned upload costs **one** call — the Vision rung returns the transcript and
+  the classification together, so a scan no longer pays the limiter's 13s twice.
 - A full live-API test run is **8 calls — 40% of a day.**
 - The demo script's "upload 8-10 documents" would spend a day's quota in one take.
 
@@ -94,7 +95,7 @@ cd backend && python -m venv .venv && .venv/Scripts/pip install -r requirements.
 .venv/Scripts/uvicorn main:app --port 8000      # API on :8000, OpenAPI docs at /docs
 cd ../frontend && npm install && npm run dev    # app on :5173
 
-cd backend && pytest       # 478 offline tests — no network, no API quota
+cd backend && pytest       # 484 offline tests — no network, no API quota
 ```
 
 Use `.venv/bin/` instead of `.venv/Scripts/` on macOS and Linux. The `.env` goes in the
@@ -202,7 +203,7 @@ TraceAI/
 │   ├── db/database.py           # SQLite; the single place the date fallback is applied
 │   ├── graph/builder.py         # the graph, assembled on read
 │   ├── routes/                  # upload · documents · search · graph · career · seed
-│   └── tests/                   # 27 files, 478 offline tests
+│   └── tests/                   # 27 files, 484 offline tests
 ├── frontend/src/
 │   ├── App.jsx                  # four views, one nav, no router
 │   ├── categories.js            # the validated category palette — one source of truth
@@ -230,7 +231,7 @@ TraceAI/
 URL ingestion, written responses, OCR, categorization, semantic search, RAG answers, the
 knowledge graph, career-path inference, the timeline and the demo seed are all live.
 
-**478 backend tests offline** (plus 9 real-HTTP, 7 live-API and 3 real-embedding, deselected
+**484 backend tests offline** (plus 9 real-HTTP, 8 live-API and 3 real-embedding, deselected
 by default) and
 **163 frontend tests**, all green. Security- and correctness-critical assertions are
 **validated by mutation** — break the guard, confirm the right test fails, restore. Two of

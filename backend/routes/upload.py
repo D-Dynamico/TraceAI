@@ -303,10 +303,24 @@ async def upload_file(
     rel_path = str(stored_path.relative_to(settings.upload_dir.parent))
     upload_date = storage.now_iso()
 
-    # Classify. categorize() never raises — a failure degrades to a filename-based
-    # guess with confidence 0.0 rather than losing the upload. It blocks on a
-    # network call and the rate limiter, so keep it off the event loop.
-    category_result = await run_in_threadpool(categorizer.categorize, result.text, filename)
+    # Classify — unless extraction already did. A scanned document goes through
+    # Gemini Vision, and that call now returns the classification alongside the
+    # transcript, so asking a second time would spend another 13s of limiter
+    # wait and another of the day's 20 requests to re-derive what we hold.
+    #
+    # `result.categorization` is None on every other path (a text layer, local
+    # OCR, a combined response whose classification half was unusable), and then
+    # this is the call it always was. categorize() never raises — a failure
+    # degrades to a filename-based guess with confidence 0.0 rather than losing
+    # the upload. It blocks on a network call and the rate limiter, so keep it
+    # off the event loop.
+    if result.categorization is not None:
+        logger.info("Reusing the classification Vision returned with %s.", filename)
+        category_result = result.categorization
+    else:
+        category_result = await run_in_threadpool(
+            categorizer.categorize, result.text, filename
+        )
 
     warnings = list(result.warnings)
     if category_result.confidence == 0.0:
@@ -590,10 +604,16 @@ async def reextract(
     categorization: CategorizationResponse | None = None
     title = doc.get("title") or ""
     if should_categorize:
-        # Never raises; a failure here still leaves the recovered text stored.
-        category_result = await run_in_threadpool(
-            categorizer.categorize, result.text, doc.get("filename") or ""
-        )
+        # Same reuse as /upload: a re-extraction that went through Vision has
+        # the classification already, and this is the retry path — the one place
+        # where quota is likeliest to be the reason it is being run at all.
+        if result.categorization is not None:
+            category_result = result.categorization
+        else:
+            # Never raises; a failure here still leaves the recovered text stored.
+            category_result = await run_in_threadpool(
+                categorizer.categorize, result.text, doc.get("filename") or ""
+            )
         stored_category = await run_in_threadpool(
             database.update_categorization,
             doc_id,

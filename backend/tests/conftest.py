@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 
 import pytest
@@ -101,6 +102,30 @@ def stub_categorizer(request, monkeypatch, stub_result):
     monkeypatch.setattr(upload_route.categorizer, "categorize", _fake)
 
 
+def combined_vision_response(text: str, **overrides) -> str:
+    """The JSON `vision._generate_combined` returns: transcript + classification.
+
+    Shared because two test modules now have to build it, and a stub that got
+    the shape subtly wrong would exercise the parse's *failure* path while
+    looking like a success case.
+    """
+    payload = {
+        "text": text,
+        "document_type": "certificate",
+        "category": "Certifications",
+        "title": "Scanned Certificate",
+        "date": "2024-03",
+        "summary": "A certificate read from a scan.",
+        "skills": [],
+        "organizations": [],
+        "people": [],
+        "tags": [],
+        "confidence": 0.8,
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
 @pytest.fixture(autouse=True)
 def stub_vision(request, monkeypatch):
     """Keep the Gemini Vision rung off the network.
@@ -121,13 +146,25 @@ def stub_vision(request, monkeypatch):
     every pre-existing expectation about images intact, and it fails *closed* —
     a test that needs Vision to succeed has to say so, so no test can pass on
     text that a stub invented. Those tests patch `vision._generate` themselves.
+
+    There are now **two** seams, because the scanned path asks for the transcript
+    and the classification in one call (`_generate_combined`) while the plain
+    transcript call remains for anything that wants only text. Both are stubbed:
+    the ladder reaches the combined one, so leaving it live would have put every
+    scanned-PDF test back on the wire — the precise hole this fixture was written
+    to close. `_generate_combined` returns an empty JSON object rather than an
+    empty string, which is the parseable equivalent of "no text": it exercises
+    the parse and then degrades on the missing transcript, and it still fails
+    closed.
     """
     if request.node.get_closest_marker("live"):
         return
 
     # Drop any client cached against a previous test's key/config.
     monkeypatch.setattr(vision, "_model", None)
+    monkeypatch.setattr(vision, "_combined_model", None)
     monkeypatch.setattr(vision, "_generate", lambda data, mime_type: "")
+    monkeypatch.setattr(vision, "_generate_combined", lambda data, mime_type: "{}")
 
 
 @pytest.fixture(autouse=True)
@@ -218,6 +255,23 @@ def make_textless_pdf() -> bytes:
 
     doc = fitz.open()
     doc.new_page()
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def make_thin_text_pdf(text: str = "Issued 2024") -> bytes:
+    """A PDF with a real but very short text layer.
+
+    The shape that lands *between* the two extraction paths: enough native text
+    that it is kept, too little to clear `ocr_char_threshold`, so OCR runs as
+    well and the two halves are concatenated.
+    """
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
     data = doc.tobytes()
     doc.close()
     return data
