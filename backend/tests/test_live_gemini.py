@@ -162,40 +162,6 @@ def test_vision_ocr_against_the_live_api(tmp_path):
     assert "certificate" in lowered, result.text
 
 
-def test_the_combined_call_transcribes_and_classifies_in_one_request(tmp_path):
-    """The call the scanned path actually makes. One request, both halves.
-
-    The offline suite can only prove the plumbing; whether a real model will
-    return a *verbatim transcript* while also writing a summary is a question
-    only the live API answers, and it is the risk the merge introduced. If this
-    starts failing on the transcript assertions, the two jobs want separating
-    again — not a looser assertion.
-    """
-    path = tmp_path / "certificate_scan.png"
-    path.write_bytes(_rendered_certificate())
-
-    result = vision.extract_and_categorize(path)
-
-    assert result.degraded is None, result.degraded
-    assert result.text.strip(), "live combined call returned no transcript"
-
-    lowered = result.text.lower()
-    assert "coursera" in lowered, result.text
-    assert "2024" in result.text, result.text
-    assert "certificate" in lowered, result.text
-    # A transcript, not the summary it was asked for in the same breath. The
-    # rendered certificate is a handful of lines; a paraphrase would be shorter
-    # than the text it replaced and would drop the issuer's exact wording.
-    assert len(result.text) > 60, result.text
-
-    assert result.categorization is not None, "classification half came back unusable"
-    assert result.categorization.title, result.categorization
-    assert result.categorization.summary, result.categorization
-    assert result.categorization.confidence > 0.0, result.categorization
-    # And the summary is a summary, not a second copy of the transcript.
-    assert result.categorization.summary != result.text
-
-
 def test_a_scanned_upload_is_searchable_end_to_end(client, tmp_path):
     """Scan -> live Vision -> live categorization -> SQLite, with real text.
 

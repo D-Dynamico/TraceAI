@@ -22,9 +22,9 @@ future reader would otherwise hit.
 ```bash
 # All backend commands run from backend/. Invoke the venv python directly.
 cd backend
-./.venv/Scripts/python.exe -m pytest -q          # 484 offline tests, ~1.5 min
+./.venv/Scripts/python.exe -m pytest -q          # 478 offline tests, ~1.5 min
 ./.venv/Scripts/python.exe -m pytest -m network  # 9 real-HTTP tests, ~7s
-./.venv/Scripts/python.exe -m pytest -m live     # 8 live Gemini tests, ~2 min
+./.venv/Scripts/python.exe -m pytest -m live     # 7 live Gemini tests, ~1 min
 ./.venv/Scripts/python.exe -m pytest -m model    # 3 real-embedding tests, ~40s
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload --port 8000
 
@@ -98,25 +98,15 @@ These have each cost real time. Read before running anything.
   20/day** — spacing cannot; see plan.md §11's unbuilt cache/batch/queue.
 - **20/day is the binding constraint on everything.** Budget before spending:
   a full `pytest -m live` run is **8 calls — 40% of the day**, so two runs and
-  the day is gone. A scanned upload is 1 call. The plan.md §10 demo script
+  the day is gone. A scanned upload is 2 calls. The plan.md §10 demo script
   ("upload 8-10 documents") would consume a whole day's quota by itself, which
   is why **"Load Demo Profile" makes no Gemini call at all** — Phase 8's design
   is now load-bearing, not a convenience.
 - Calls are serialized by a rate limiter that holds its lock across the sleep.
   Deliberate; do not parallelize.
-- **A scanned upload costs one Gemini call**, not the two it cost until
-  2026-08-30. `vision.extract_and_categorize` asks for the transcript and the
-  classification in one response, so the route skips `categorizer.categorize`
-  entirely — ~20s on a Tesseract-less host became ~6s, and 10% of the day became
-  5%. `vision.extract_text` (transcript only) still exists and is still used by
-  nothing but its own tests; the ladder goes through the combined call.
-  **The transcription guarantee is what this puts at risk** — a model asked for
-  a summary has a reason to paraphrase the transcript it was also asked for — so
-  the prompt separates the two jobs explicitly and the sentinel is asserted on
-  both call shapes. Read the comment above `COMBINED_PROMPT` before touching it.
-  A response that transcribes but classifies unusably keeps its text and falls
-  back to the second call, so the worst case is the old cost, never a worse
-  result.
+- **A scanned upload costs two Gemini calls** (Vision OCR, then
+  categorization), so ~26s at 13s spacing. Budget for it in any test or demo
+  that uploads several scans.
 - **Never call `requests.get()` on a user-supplied URL.** Go through
   `ingestion/url_guard.py::safe_get`, which validates the scheme, rejects hosts
   resolving to non-public addresses, re-validates every redirect hop, and caps

@@ -24,7 +24,7 @@ import uuid
 import pytest
 
 from ai import categorizer, vision
-from conftest import combined_vision_response, make_image, upload
+from conftest import make_image, upload
 from config import settings
 from db import database
 import storage
@@ -50,10 +50,7 @@ def deterministic_key(monkeypatch):
 @pytest.fixture
 def vision_recovers(monkeypatch):
     """Make the next Vision call succeed — the quota-has-refilled case."""
-    monkeypatch.setattr(
-        vision, "_generate_combined",
-        lambda data, mime_type: combined_vision_response(TRANSCRIPT),
-    )
+    monkeypatch.setattr(vision, "_generate", lambda data, mime_type: TRANSCRIPT)
 
 
 @pytest.fixture
@@ -115,7 +112,7 @@ def test_a_quota_wall_is_reported_as_retryable(client, monkeypatch):
     def _quota_exhausted(data, mime_type):
         raise RuntimeError("429 ResourceExhausted: quota exceeded")
 
-    monkeypatch.setattr(vision, "_generate_combined", _quota_exhausted)
+    monkeypatch.setattr(vision, "_generate", _quota_exhausted)
 
     body = upload(client, "scan.png", make_image(), "image/png").json()
 
@@ -166,27 +163,20 @@ def test_reextract_recovers_text_the_upload_lost(
 
 def test_recovered_text_is_reclassified(client, failed_scan, vision_recovers, categorize_calls):
     """Text without fresh metadata is still broken — the row would keep the
-    filename guess the failed upload produced.
-
-    The classification now comes back *with* the transcript, from the same
-    Vision call, so `categorize_calls` staying empty is the assertion that
-    matters here: recovery costs one Gemini request instead of two, on the one
-    path that exists because quota ran out in the first place.
-    """
+    filename guess the failed upload produced."""
     doc_id, _ = failed_scan
 
     body = client.post(f"/api/documents/{doc_id}/reextract").json()
 
     assert body["recategorized"] is True
-    assert body["categorization"]["title"] == "Scanned Certificate"
-    assert categorize_calls == [], (
-        "a second call to re-derive what the Vision response already carried"
-    )
+    assert body["categorization"]["title"] == "Deep Learning Specialization"
+    assert len(categorize_calls) == 1
+    assert "CERTIFICATE" in categorize_calls[0], "must classify the *recovered* text"
 
     row = database.get_document(doc_id)
     assert row["category"] == "Certifications"
-    assert row["confidence"] == 0.8
-    assert row["title"] == "Scanned Certificate"
+    assert row["confidence"] == 0.9
+    assert row["skills"] == ["Deep Learning"]
 
 
 def test_recovered_text_becomes_searchable(client, failed_scan, vision_recovers, categorize_calls):
@@ -263,7 +253,7 @@ def test_a_failed_reextract_records_this_attempts_reason(client, failed_scan, mo
     def _quota_exhausted(data, mime_type):
         raise RuntimeError("429 ResourceExhausted: quota exceeded")
 
-    monkeypatch.setattr(vision, "_generate_combined", _quota_exhausted)
+    monkeypatch.setattr(vision, "_generate", _quota_exhausted)
 
     body = client.post(f"/api/documents/{doc_id}/reextract").json()
 
@@ -342,12 +332,12 @@ def _seed_recovered_scan(client):
     """
     import routes.upload as upload_route
 
-    original = vision._generate_combined
-    vision._generate_combined = lambda data, mime_type: combined_vision_response(TRANSCRIPT)
+    original = vision._generate
+    vision._generate = lambda data, mime_type: TRANSCRIPT
     try:
         body = upload(client, "scan.png", make_image(), "image/png").json()
     finally:
-        vision._generate_combined = original
+        vision._generate = original
 
     assert "CERTIFICATE" in database.get_document(body["id"])["raw_text"]
     return body["id"], body

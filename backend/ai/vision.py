@@ -43,7 +43,6 @@ from typing import NamedTuple
 from ai import degradation
 from ai import gemini
 from config import settings
-from models.document import Categorization
 
 logger = logging.getLogger(__name__)
 
@@ -89,70 +88,6 @@ An illegible word is better omitted than guessed.
 {NO_TEXT_SENTINEL}
 """
 
-# One call that both transcribes and classifies, for the scanned path.
-#
-# **Why this exists.** A scan used to cost two Gemini calls — this module, then
-# `ai/categorizer.py` over the transcript — serialized 13s apart by the shared
-# limiter. On a host without Tesseract (Render's free tier — see the note on
-# `vision_ocr_enabled` in config.py) that is *every* scanned upload: ~20s of
-# wall clock and 10% of a 20-request day for one document. The second call adds
-# no information the first did not already have in front of it, so it is folded
-# in here.
-#
-# **The transcription guarantee is what this risks.** A model asked to
-# summarize will happily paraphrase the transcript it was also asked for, and a
-# paraphrase stored as `raw_text` is precisely the failure this module's
-# docstring exists to prevent — it would be embedded, searched, and cited as if
-# read. So "text" is specified as verbatim, is restated as a rule, is told
-# explicitly that the summary belongs elsewhere, and keeps the sentinel.
-# Temperature stays 0.0.
-#
-# Returns JSON rather than the bare transcript `PROMPT` asks for, so it needs
-# its own generation config and its own parse.
-COMBINED_PROMPT = f"""Transcribe this document, then classify what you \
-transcribed. It is a document from a student's portfolio of academic and \
-professional records.
-
-Return ONLY a JSON object with exactly these keys:
-{{
-  "text": "the complete verbatim transcript",
-  "document_type": "certificate | resume | project_report | internship_letter | portfolio | other",
-  "category": "Projects | Skills | Certifications | Internships | Achievements | Academics",
-  "title": "extracted or inferred title",
-  "date": "YYYY-MM or YYYY if found, else null",
-  "summary": "2-3 sentence summary",
-  "skills": ["skill1", "skill2"],
-  "organizations": ["org1", "org2"],
-  "people": ["person1"],
-  "tags": ["tag1", "tag2"],
-  "confidence": 0.0
-}}
-
-Rules for "text" — a transcript, not a description:
-- Transcribe exactly as it appears, preserving reading order and line breaks.
-- Include every legible element: headings, names, dates, issuer, signatures, \
-seals, reference numbers, body text.
-- Do NOT infer, complete, correct, or invent text that is not legibly present. \
-An illegible word is better omitted than guessed.
-- Do NOT describe images, logos, or layout, and do NOT summarize here — the \
-summary belongs in "summary".
-- If the document contains no legible text at all, set "text" to exactly \
-{NO_TEXT_SENTINEL}.
-
-Rules for the classification, which must describe only what "text" contains:
-- Use ONLY the listed values for document_type and category.
-- date must be the date the document describes (issue/completion date), NOT today.
-- If no date appears in the document, use null. Do not guess.
-- skills are technical or professional competencies, not job titles.
-- people are named individuals, excluding the document's owner where identifiable.
-- confidence is your certainty in this classification, between 0.0 and 1.0.
-- Extract only what the document supports. Empty lists are correct when nothing applies.
-"""
-
-
-class VisionError(Exception):
-    """A combined transcribe-and-classify response that was not a JSON object."""
-
 
 class VisionResult(NamedTuple):
     """Extracted text, or an empty string plus the reason it is empty.
@@ -167,22 +102,6 @@ class VisionResult(NamedTuple):
     degraded: degradation.Degradation | None = None
 
 
-class CombinedResult(NamedTuple):
-    """A transcript plus the classification of it, from one call.
-
-    `categorization` is None whenever the classification half could not be
-    used — a response that would not parse, or one whose keys the model got
-    wrong. The transcript can still be good in that case, so the caller falls
-    back to a separate `categorizer.categorize()` over `text` rather than
-    discarding it: worst case is the two calls this replaced, never a worse
-    result than before.
-    """
-
-    text: str
-    categorization: Categorization | None = None
-    degraded: degradation.Degradation | None = None
-
-
 # Shared across every Gemini caller — see ai/gemini.py. Bound to module-local
 # names so tests can monkeypatch vision._rate_limiter / vision._redact without
 # reaching into another module (the pattern ai/categorizer.py established).
@@ -193,19 +112,8 @@ _redact = gemini.redact
 # consistent, which also makes a re-upload comparable.
 _GENERATION_CONFIG = {"temperature": 0.0}
 
-# The combined call returns a JSON object, so it needs `response_mime_type` —
-# the same belt the categorizer wears. Temperature stays at 0.0 rather than the
-# categorizer's 0.1: this response carries a verbatim transcript, and that half
-# must not drift between reads of one scan.
-_COMBINED_GENERATION_CONFIG = {
-    "response_mime_type": "application/json",
-    "temperature": 0.0,
-}
-
 _model = None
 _model_lock = threading.Lock()
-_combined_model = None
-_combined_model_lock = threading.Lock()
 
 
 def is_available() -> bool:
@@ -227,22 +135,6 @@ def _get_model():
             return _model
         _model = gemini.build_model(_GENERATION_CONFIG)
         return _model
-
-
-def _get_combined_model():
-    """The JSON-configured client, cached separately from the transcript one.
-
-    Two clients rather than one reconfigured per call: `generation_config` is
-    fixed at construction, and both shapes are used on the same process.
-    """
-    global _combined_model
-    if _combined_model is not None:
-        return _combined_model
-    with _combined_model_lock:
-        if _combined_model is not None:
-            return _combined_model
-        _combined_model = gemini.build_model(_COMBINED_GENERATION_CONFIG)
-        return _combined_model
 
 
 def _to_png(path: Path) -> bytes:
@@ -285,125 +177,9 @@ def _generate(data: bytes, mime_type: str) -> str:
     return (response.text or "").strip()
 
 
-def _generate_combined(data: bytes, mime_type: str) -> str:
-    """The combined call's network touch — the second seam tests stub.
-
-    Separate from `_generate` so a test can drive either shape, and so the
-    conftest stub that keeps the offline suite off the wire covers both.
-    """
-    model = _get_combined_model()
-    response = gemini.generate(
-        model,
-        [COMBINED_PROMPT, {"mime_type": mime_type, "data": data}],
-        limiter=_rate_limiter,
-    )
-    return (response.text or "").strip()
-
-
 def _is_no_text(text: str) -> bool:
     """Whether the model reported "nothing legible" rather than a transcript."""
     return text.strip().strip('".\'').upper() == NO_TEXT_SENTINEL
-
-
-def _prepare(path: Path) -> tuple[bytes, str] | degradation.Degradation:
-    """Everything both entry points must check before spending a call.
-
-    Returns the payload to send, or the reason not to send it. Shared so the
-    combined path cannot quietly skip a guard the transcript path enforces —
-    the size cap especially, which is the one that would otherwise fail as an
-    opaque API error instead of a `too_large` a caller can explain.
-    """
-    if not settings.vision_ocr_enabled:
-        return degradation.from_reason("vision_disabled")
-
-    if not gemini.is_configured():
-        logger.warning("Vision OCR skipped for %s — no API key.", path.name)
-        return degradation.from_reason("no_api_key")
-
-    try:
-        data, mime_type = _read_payload(path)
-    except Exception as exc:
-        # A corrupt or non-image file. Not the model's fault and retrying will
-        # not change it, which is exactly what `no_text` means here.
-        logger.warning("Vision OCR could not read %s: %s", path.name, exc)
-        return degradation.from_reason("no_text")
-
-    if len(data) > MAX_INLINE_BYTES:
-        logger.warning(
-            "Vision OCR skipped for %s — %d bytes exceeds the %d inline limit.",
-            path.name, len(data), MAX_INLINE_BYTES,
-        )
-        return degradation.from_reason("too_large")
-
-    return data, mime_type
-
-
-def extract_and_categorize(path: Path) -> CombinedResult:
-    """Transcribe *and* classify a scan in one Gemini call. Never raises.
-
-    The quota-cheap path for a scanned document: one call where there were two,
-    which on a Tesseract-less host halves both the wall clock (~20s to ~6s) and
-    the share of a 20-request day a single upload costs.
-
-    Degrades in two directions, and they are different. A failure that produced
-    no transcript returns empty text plus a reason, exactly as `extract_text`
-    does — the caller cannot tell the two apart and does not need to. A response
-    that transcribed but classified badly returns the text with
-    `categorization=None`, which tells the caller to classify it the old way;
-    that costs the second call this function exists to avoid, but only on the
-    responses that earned it.
-    """
-    prepared = _prepare(path)
-    if isinstance(prepared, degradation.Degradation):
-        return CombinedResult("", None, prepared)
-    data, mime_type = prepared
-
-    try:
-        raw = _generate_combined(data, mime_type)
-    except Exception as exc:
-        # Quota, timeout, network, a safety block, an SDK change. Redacted
-        # because the message can carry the key on the REST transport.
-        logger.warning(
-            "Combined Vision call failed for %s: %s: %s",
-            path.name, type(exc).__name__, _redact(exc),
-        )
-        return CombinedResult("", None, degradation.from_reason(degradation.classify_exception(exc)))
-
-    try:
-        payload = gemini.parse_json_object(raw, VisionError)
-    except VisionError as exc:
-        # No transcript survives an unparseable response — the text was inside
-        # the JSON. Retryable, so the caller can degrade and offer a retry.
-        logger.warning("Combined Vision response unreadable for %s: %s", path.name, _redact(exc))
-        return CombinedResult("", None, degradation.from_reason("unreadable_response"))
-
-    text = str(payload.pop("text", "") or "").strip()
-    if not text or _is_no_text(text):
-        logger.info("Combined Vision found no text in %s.", path.name)
-        return CombinedResult("", None, degradation.from_reason("no_text"))
-
-    try:
-        categorization = Categorization.model_validate(payload)
-    except Exception as exc:
-        # The transcript is still good, and it is the half that cannot be
-        # recovered by a second call. Keep it; let the caller classify.
-        logger.warning(
-            "Combined Vision classified %s unusably (%s) — text kept, will classify separately.",
-            path.name, _redact(exc),
-        )
-        return CombinedResult(text, None, None)
-
-    # A classification with nothing in it is a failure that happens to parse —
-    # the same bar `categorizer.categorize` holds its own responses to.
-    if not categorization.title and not categorization.summary:
-        logger.warning("Combined Vision returned an empty classification for %s.", path.name)
-        return CombinedResult(text, None, None)
-
-    logger.info(
-        "Combined Vision extracted %d chars from %s and classified it as %s/%s.",
-        len(text), path.name, categorization.category, categorization.document_type,
-    )
-    return CombinedResult(text, categorization, None)
 
 
 def extract_text(path: Path) -> VisionResult:
@@ -413,10 +189,27 @@ def extract_text(path: Path) -> VisionResult:
     by config, no key, too large to send inline, unreadable file, a failed call,
     or a document with nothing legible on it.
     """
-    prepared = _prepare(path)
-    if isinstance(prepared, degradation.Degradation):
-        return VisionResult("", prepared)
-    data, mime_type = prepared
+    if not settings.vision_ocr_enabled:
+        return VisionResult("", degradation.from_reason("vision_disabled"))
+
+    if not gemini.is_configured():
+        logger.warning("Vision OCR skipped for %s — no API key.", path.name)
+        return VisionResult("", degradation.from_reason("no_api_key"))
+
+    try:
+        data, mime_type = _read_payload(path)
+    except Exception as exc:
+        # A corrupt or non-image file. Not the model's fault and retrying will
+        # not change it, which is exactly what `no_text` means here.
+        logger.warning("Vision OCR could not read %s: %s", path.name, exc)
+        return VisionResult("", degradation.from_reason("no_text"))
+
+    if len(data) > MAX_INLINE_BYTES:
+        logger.warning(
+            "Vision OCR skipped for %s — %d bytes exceeds the %d inline limit.",
+            path.name, len(data), MAX_INLINE_BYTES,
+        )
+        return VisionResult("", degradation.from_reason("too_large"))
 
     try:
         text = _generate(data, mime_type)

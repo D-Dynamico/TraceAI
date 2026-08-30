@@ -21,7 +21,6 @@ from pathlib import Path
 from ai import degradation
 from config import settings
 from ingestion import ocr_handler
-from models.document import Categorization
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +59,6 @@ class ExtractionResult:
     # **Invariant: set exactly when the no-text warning is emitted**, so the
     # prose and the code can never disagree about whether extraction failed.
     degraded: degradation.Degradation | None = None
-    # The classification the Vision rung produced in the same call as the
-    # transcript, when it produced a usable one. None on every other path, and
-    # the caller then classifies `text` itself — so this is an optimisation the
-    # route may ignore, never a source of truth it must consult.
-    categorization: Categorization | None = None
 
     def __post_init__(self) -> None:
         self.char_count = len(self.text)
@@ -111,14 +105,7 @@ def _extract_pdf(path: Path) -> ExtractionResult:
         if ocr.text:
             method = f"native+{ocr.method}" if native_text else ocr.method
             combined = (native_text + "\n\n" + ocr.text).strip() if native_text else ocr.text
-            # Only when the OCR text stands alone. A `native+vision` document
-            # is part text layer, and the classification came from the pixels
-            # alone — it never saw the half prepended to it, so it does not
-            # describe what is being stored.
-            return ExtractionResult(
-                combined, "pdf", method, used_ocr=True, warnings=warnings,
-                categorization=None if native_text else ocr.categorization,
-            )
+            return ExtractionResult(combined, "pdf", method, used_ocr=True, warnings=warnings)
         if not native_text:
             warnings.append(_no_text_warning(ocr))
             return ExtractionResult(
@@ -194,7 +181,6 @@ def _extract_image(path: Path) -> ExtractionResult:
     return ExtractionResult(
         ocr.text, "image", ocr.method or "ocr", used_ocr=True,
         warnings=warnings, degraded=ocr.degraded if not ocr.text else None,
-        categorization=ocr.categorization,
     )
 
 

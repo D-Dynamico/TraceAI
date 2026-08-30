@@ -30,7 +30,6 @@ from typing import NamedTuple
 
 from ai import degradation
 from ai import vision
-from models.document import Categorization
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +47,6 @@ class OcrResult(NamedTuple):
     method: str = ""  # "ocr" (local) | "vision" | "" when nothing worked
     degraded: degradation.Degradation | None = None
     local_available: bool = False
-    # The classification the Vision rung returned alongside its transcript, when
-    # it managed one. None on the local rung (Tesseract classifies nothing) and
-    # on a combined response whose classification half was unusable — in both
-    # cases the caller classifies the text separately, as it always did.
-    categorization: Categorization | None = None
 
 
 def _tesseract_available() -> bool:
@@ -100,23 +94,13 @@ def _tesseract_pdf(path: Path, dpi: int = 200) -> str:
 
 
 def _run_ladder(path: Path, local_text: str, local_available: bool) -> OcrResult:
-    """Shared tail: accept local text if there is any, else try Vision.
-
-    The Vision rung asks for the transcript *and* the classification in one
-    call. That is not a shortcut around rung 1 — it runs only where rung 1
-    already failed, and the ordering the mutation tests pin is unchanged. It is
-    a shortcut around the *second* Gemini call the caller would otherwise make
-    over the transcript, which on a Tesseract-less host was every scan's second
-    13s of rate-limiter wait.
-    """
+    """Shared tail: accept local text if there is any, else try Vision."""
     if local_text:
         return OcrResult(local_text, "ocr", None, local_available)
 
-    result = vision.extract_and_categorize(path)
+    result = vision.extract_text(path)
     if result.text:
-        return OcrResult(
-            result.text, "vision", None, local_available, result.categorization
-        )
+        return OcrResult(result.text, "vision", None, local_available)
 
     return OcrResult("", "", result.degraded, local_available)
 
