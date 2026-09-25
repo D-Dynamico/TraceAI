@@ -183,3 +183,27 @@ def test_malformed_metadata_json_does_not_crash_reads(client, stored_doc):
                      ("{not valid json", doc_id))
 
     assert database.get_document(doc_id)["metadata"] == {}
+
+
+def test_status_reports_whether_the_document_is_indexed(client, stored_doc):
+    """The upload view's last pipeline step polls this.
+
+    TestClient runs background tasks before returning, so the upload has been
+    indexed by now. Clearing `embedding_id` must flip it back — mutation-tested:
+    hard-coding indexed=True turns the second assertion red.
+    """
+    doc_id, _, _ = stored_doc
+    assert client.get(f"/api/documents/{doc_id}/status").json() == {
+        "id": doc_id,
+        "indexed": True,
+    }
+
+    with sqlite3.connect(settings.db_path) as conn:
+        conn.execute("UPDATE documents SET embedding_id = NULL WHERE id = ?", (doc_id,))
+    assert client.get(f"/api/documents/{doc_id}/status").json()["indexed"] is False
+
+
+def test_status_is_scoped_to_the_owner(client, stored_doc):
+    doc_id, _, _ = stored_doc
+    other = {"X-User-Id": "22222222-2222-4222-8222-222222222222"}
+    assert client.get(f"/api/documents/{doc_id}/status", headers=other).status_code == 404

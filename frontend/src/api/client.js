@@ -32,10 +32,44 @@ async function handle(res) {
   return data;
 }
 
-export async function uploadFile(file) {
+// XHR rather than fetch for one reason: fetch exposes no upload progress, and
+// the upload view's first pipeline step is the bytes leaving the browser. The
+// callback gets 0–1 while sending, and nothing after — the server's own work
+// (extract + categorize) is not observable from here and is not faked.
+export function uploadFile(file, onProgress) {
   const form = new FormData();
   form.append("file", file);
-  const res = await apiFetch(`/api/upload`, { method: "POST", body: form });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/api/upload`);
+    xhr.setRequestHeader(USER_HEADER, getUserId());
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      // Fires once the body is fully sent, even when no progress event was
+      // length-computable — the handoff to the server's phase.
+      xhr.upload.onload = () => onProgress(1);
+    }
+    xhr.onload = () => {
+      let data = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // Non-JSON body (a proxy error page): fall through to the status message.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data?.detail || `Request failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error("Network error — the upload did not reach the server."));
+    xhr.send(form);
+  });
+}
+
+// Whether ingest's background indexing has finished for a document — the
+// upload view's last pipeline step.
+export async function getStatus(id) {
+  const res = await apiFetch(`/api/documents/${id}/status`);
   return handle(res);
 }
 

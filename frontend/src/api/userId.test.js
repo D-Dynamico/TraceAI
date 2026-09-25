@@ -83,7 +83,8 @@ describe("every API call carries the identity header", () => {
     ["recategorize", () => client.recategorize("d1")],
     ["setCategory", () => client.setCategory("d1", "Projects")],
     ["deleteDocument", () => client.deleteDocument("d1")],
-    ["uploadFile", () => client.uploadFile(new File(["x"], "a.txt"))],
+    ["getStatus", () => client.getStatus("d1")],
+    // uploadFile is XHR, so its header is pinned in client.test.js instead.
   ];
 
   it.each(calls)("%s sends X-User-Id", async (_name, invoke) => {

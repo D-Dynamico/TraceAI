@@ -4,6 +4,7 @@ import {
   CAREER_PATH_COLOR,
   UNCATEGORIZED,
   categoryColor,
+  themeCss,
 } from "./categories";
 
 // The palette is the single source of truth for category identity across the
@@ -31,5 +32,28 @@ describe("categoryColor", () => {
     for (const category of Object.keys(CATEGORY_COLORS)) {
       expect(categoryColor(category)).not.toBe(CAREER_PATH_COLOR);
     }
+  });
+});
+
+describe("themeCss", () => {
+  // Every mark color is a var() reference; a variable missing from either mode
+  // paints nothing at all, silently, in that mode only.
+  it("defines every variable the palette hands out, in both modes", () => {
+    const css = themeCss();
+    const [light, ...dark] = css.split(/@media|:root\[data-theme="dark"\]/);
+    const names = [...Object.values(CATEGORY_COLORS), CAREER_PATH_COLOR].map(
+      (v) => v.match(/var\((--[\w-]+)\)/)[1],
+    );
+    for (const name of names) {
+      expect(light).toContain(`${name}:#`);
+      for (const block of dark) expect(block).toContain(`${name}:#`);
+    }
+  });
+
+  it("gives dark mode its own steps rather than reusing the light ones", () => {
+    const css = themeCss();
+    const light = css.match(/--mark-certifications:(#[0-9a-f]{6})/)[1];
+    const dark = css.match(/data-theme="dark"\]\{[^}]*--mark-certifications:(#[0-9a-f]{6})/)[1];
+    expect(dark).not.toBe(light);
   });
 });

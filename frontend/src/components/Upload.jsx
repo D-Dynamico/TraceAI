@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from "react";
-import { uploadFile, ingestUrl, ingestText } from "../api/client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getStatus, uploadFile, ingestUrl, ingestText } from "../api/client";
 import GitHubCard from "./GitHubCard";
+import { PipelineSteps } from "./ProcessingQueue";
 import ResultCard from "./ResultCard";
 import { CardShell, ErrorBanner } from "./cardParts";
 
@@ -21,32 +22,40 @@ function Result({ result }) {
   return <ResultCard result={result} />;
 }
 
-/** A pending item, shown at the top of the results list while its request is
- * in flight (deferred item A). The wait is dominated by the Gemini call behind
- * a 6.5s rate limiter, not by bytes — so this is an honest indeterminate
- * skeleton, never a percentage that would be a lie. */
-function PendingCard({ label }) {
+/** An item whose request has not answered yet: its label, the live pipeline
+ * strip, and — while it is still working — a skeleton where the card will go.
+ * A failed item keeps its strip (the ✕ says which step) but not the message,
+ * which the error banner already carries. */
+function PendingCard({ item }) {
+  const working = item.phase !== "failed";
   return (
     <CardShell>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-sand-500">{label}</p>
-          <div className="mt-2 space-y-1.5">
-            <div className="h-2 w-2/3 animate-pulse rounded bg-sand-300" />
-            <div className="h-2 w-1/3 animate-pulse rounded bg-sand-300" />
-          </div>
-        </div>
-        <span className="shrink-0 text-xs text-sand-500">categorizing…</span>
+      <p className="truncate text-sm font-medium text-sand-500">{item.label}</p>
+      <div className="mt-2">
+        <PipelineSteps item={item} />
       </div>
+      {working && (
+        <div className="mt-3 space-y-1.5">
+          <div className="h-2 w-2/3 animate-pulse rounded bg-sand-300" />
+          <div className="h-2 w-1/3 animate-pulse rounded bg-sand-300" />
+        </div>
+      )}
     </CardShell>
   );
 }
 
-let pendingSeq = 0;
+let itemSeq = 0;
+
+// How long the index step is polled before it settles on "not indexed yet".
+// Generous: on a cold free instance the first embed also loads the model.
+const POLL_MS = 1500;
+const POLL_TRIES = 40;
 
 export default function Upload() {
-  const [results, setResults] = useState([]);
-  const [pending, setPending] = useState([]); // [{ id, label }]
+  // One list for everything ingested this session, newest first. Each item
+  // carries its own pipeline phase (see ProcessingQueue.jsx) and, once the
+  // request answers, its result.
+  const [items, setItems] = useState([]);
   // Per-input busy, not one shared boolean: uploading files must not disable the
   // URL and text inputs (deferred item A — each input says what *it* is doing).
   const [busy, setBusy] = useState({ files: false, url: false, text: false });
@@ -57,14 +66,71 @@ export default function Upload() {
   const [entry, setEntry] = useState("");
   const inputRef = useRef(null);
 
-  const addPending = useCallback((label) => {
-    const id = ++pendingSeq;
-    setPending((p) => [{ id, label }, ...p]);
-    return id;
+  // Polls outlive the view if the user navigates away mid-index; they check
+  // this before writing, and stop.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
-  const clearPending = useCallback((id) => {
-    setPending((p) => p.filter((x) => x.id !== id));
+
+  const patch = useCallback((id, changes) => {
+    setItems((all) => all.map((it) => (it.id === id ? { ...it, ...changes } : it)));
   }, []);
+
+  const addItems = useCallback((specs) => {
+    const created = specs.map((spec) => ({ id: ++itemSeq, phase: "queued", ...spec }));
+    setItems((all) => [...created.slice().reverse(), ...all]);
+    return created.map((c) => c.id);
+  }, []);
+
+  // Ingest answers before its background indexing runs, so the last step is
+  // read from /status rather than assumed. A transport error ends the poll as
+  // "not indexed yet" — the honest reading of "could not tell".
+  const pollIndex = useCallback(
+    async (id, docId) => {
+      for (let i = 0; i < POLL_TRIES; i++) {
+        if (!mounted.current) return;
+        try {
+          const { indexed } = await getStatus(docId);
+          if (indexed) {
+            if (mounted.current) patch(id, { indexed: true });
+            return;
+          }
+        } catch {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, POLL_MS));
+      }
+      if (mounted.current) patch(id, { indexed: false });
+    },
+    [patch]
+  );
+
+  // Shared tail of all three inputs: run the request, move the item through its
+  // phases, and start the index poll once there is a document to ask about.
+  const run = useCallback(
+    async (id, kind, request) => {
+      let at = kind === "file" ? "sending" : "server";
+      patch(id, { phase: at, progress: 0 });
+      try {
+        const data = await request((p) => {
+          // Bytes are all sent once progress reaches 1; what follows is the
+          // server's own work.
+          if (p >= 1) at = "server";
+          patch(id, at === "server" ? { phase: "server" } : { progress: p });
+        });
+        patch(id, { phase: "done", result: { kind, ...data } });
+        if (data?.id && data.char_count) pollIndex(id, data.id);
+      } catch (e) {
+        patch(id, { phase: "failed", failedAt: at });
+        throw e;
+      }
+    },
+    [patch, pollIndex]
+  );
 
   const handleFiles = useCallback(
     async (fileList) => {
@@ -73,22 +139,23 @@ export default function Upload() {
       setBusy((b) => ({ ...b, files: true }));
       setBatch({ done: 0, total: files.length });
       setError("");
-      for (const file of files) {
-        const pid = addPending(file.name);
+      // Every file is listed as queued up front, so a ten-file drop shows the
+      // whole queue at once rather than one card appearing at a time.
+      const ids = addItems(files.map((f) => ({ kind: "file", label: f.name })));
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
         try {
-          const data = await uploadFile(file);
-          setResults((prev) => [{ kind: "file", ...data }, ...prev]);
+          await run(ids[i], "file", (onProgress) => uploadFile(file, onProgress));
         } catch (e) {
           setError(`${file.name}: ${e.message}`);
         } finally {
-          clearPending(pid);
           setBatch((b) => (b ? { ...b, done: b.done + 1 } : b));
         }
       }
       setBusy((b) => ({ ...b, files: false }));
       setBatch(null);
     },
-    [addPending, clearPending]
+    [addItems, run]
   );
 
   const onDrop = useCallback(
@@ -105,36 +172,34 @@ export default function Upload() {
     if (!trimmed) return;
     setBusy((b) => ({ ...b, url: true }));
     setError("");
-    const pid = addPending(trimmed);
+    const [id] = addItems([{ kind: "url", label: trimmed }]);
     try {
-      const data = await ingestUrl(trimmed);
-      setResults((prev) => [{ kind: "url", ...data }, ...prev]);
+      await run(id, "url", () => ingestUrl(trimmed));
       setUrl("");
     } catch (e) {
       setError(e.message);
     } finally {
-      clearPending(pid);
       setBusy((b) => ({ ...b, url: false }));
     }
-  }, [url, addPending, clearPending]);
+  }, [url, addItems, run]);
 
   const submitEntry = useCallback(async () => {
     const trimmed = entry.trim();
     if (!trimmed) return;
     setBusy((b) => ({ ...b, text: true }));
     setError("");
-    const pid = addPending(trimmed.split("\n")[0].slice(0, 60));
+    const [id] = addItems([{ kind: "text", label: trimmed.split("\n")[0].slice(0, 60) }]);
     try {
-      const data = await ingestText(trimmed);
-      setResults((prev) => [{ kind: "text", ...data }, ...prev]);
+      await run(id, "text", () => ingestText(trimmed));
       setEntry("");
     } catch (e) {
       setError(e.message);
     } finally {
-      clearPending(pid);
       setBusy((b) => ({ ...b, text: false }));
     }
-  }, [entry, addPending, clearPending]);
+  }, [entry, addItems, run]);
+
+  const doneCount = items.filter((it) => it.result).length;
 
   const dropLabel = busy.files
     ? batch && batch.total > 1
@@ -243,18 +308,26 @@ export default function Upload() {
 
       <ErrorBanner message={error} />
 
-      {/* Results — pending skeletons slot in at the top as each item resolves. */}
-      {(pending.length > 0 || results.length > 0) && (
+      {/* Everything ingested this session, newest first. An item shows its
+          pipeline strip throughout; once its request answers, the strip sits
+          above the result card so the index step can finish in place. */}
+      {items.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-sand-600">
-            Ingested ({results.length})
+            Ingested ({doneCount})
           </h2>
-          {pending.map((p) => (
-            <PendingCard key={p.id} label={p.label} />
-          ))}
-          {results.map((r) => (
-            <Result key={r.id} result={r} />
-          ))}
+          {items.map((it) =>
+            it.result ? (
+              <div key={it.id} className="space-y-1.5">
+                <div className="px-1">
+                  <PipelineSteps item={it} />
+                </div>
+                <Result result={it.result} />
+              </div>
+            ) : (
+              <PendingCard key={it.id} item={it} />
+            )
+          )}
         </div>
       )}
     </div>

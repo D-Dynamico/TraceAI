@@ -10,11 +10,146 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens, as RGB channels so Tailwind's `/ <alpha-value>` modifiers keep
+   working (tailwind.config.js maps every color name to one of these).
+
+   Light is the original warm-paper theme, value for value. Dark is SELECTED,
+   not inverted: each step was chosen for its job and checked with the WCAG
+   contrast it has to clear on the dark card (#211e1b) and page (#171513) —
+   quiet text sand-500 5.57:1 / 6.12:1, body sand-700 10.2:1, the espresso
+   accent 8.1:1 as text. The accent flips from a dark fill with white ink to a
+   light fill with dark ink, which is what `on-accent` is for: it is the ink
+   on any strong fill (buttons, the graph tooltip), white in light mode.
+
+   The page stays the darker surface in both modes, so a card still reads as
+   raised. Category hues are not here — see themeCss() in src/categories.js.
+
+   Dark applies under the OS setting unless the page is stamped
+   data-theme="light", and always when stamped "dark" (the nav toggle), so the
+   user's choice wins in both directions. */
+@layer base {
+  :root {
+    color-scheme: light;
+    --paper: 250 246 239;
+    --parchment: 239 233 221;
+    --sand-50: 252 250 246;
+    --sand-100: 248 244 239;
+    --sand-200: 237 231 221;
+    --sand-300: 220 211 196;
+    --sand-400: 174 160 139;
+    --sand-500: 112 101 86;
+    --sand-600: 85 78 68;
+    --sand-700: 68 63 56;
+    --sand-800: 43 40 36;
+    --sand-900: 25 23 21;
+    --espresso-50: 247 241 235;
+    --espresso-100: 240 230 219;
+    --espresso-200: 225 209 193;
+    --espresso-300: 201 180 159;
+    --espresso-400: 171 145 118;
+    --espresso-500: 143 114 84;
+    --espresso-600: 118 91 64;
+    --espresso-700: 101 77 52;
+    --on-accent: 255 255 255;
+    --amber-50: 255 251 235;
+    --amber-100: 254 243 199;
+    --amber-200: 253 230 138;
+    --amber-300: 252 211 77;
+    --amber-600: 217 119 6;
+    --amber-700: 180 83 9;
+    --amber-800: 146 64 14;
+    --red-50: 254 242 242;
+    --red-100: 254 226 226;
+    --red-200: 254 202 202;
+    --red-300: 252 165 165;
+    --red-600: 220 38 38;
+    --red-700: 185 28 28;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper: 33 30 27;
+      --parchment: 23 21 19;
+      --sand-50: 29 26 23;
+      --sand-100: 36 33 29;
+      --sand-200: 47 43 38;
+      --sand-300: 63 58 51;
+      --sand-400: 107 98 85;
+      --sand-500: 160 148 131;
+      --sand-600: 191 180 164;
+      --sand-700: 212 202 187;
+      --sand-800: 230 222 210;
+      --sand-900: 243 237 228;
+      --espresso-50: 46 37 28;
+      --espresso-100: 58 47 36;
+      --espresso-200: 77 62 47;
+      --espresso-300: 110 89 67;
+      --espresso-400: 154 128 98;
+      --espresso-500: 184 156 124;
+      --espresso-600: 205 177 147;
+      --espresso-700: 220 196 168;
+      --on-accent: 26 22 18;
+      --amber-50: 45 34 16;
+      --amber-100: 58 43 18;
+      --amber-200: 90 67 24;
+      --amber-300: 122 90 28;
+      --amber-600: 224 165 58;
+      --amber-700: 234 179 90;
+      --amber-800: 240 199 124;
+      --red-50: 47 23 23;
+      --red-100: 61 28 28;
+      --red-200: 92 39 39;
+      --red-300: 122 51 51;
+      --red-600: 240 128 128;
+      --red-700: 243 154 154;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: 33 30 27;
+    --parchment: 23 21 19;
+    --sand-50: 29 26 23;
+    --sand-100: 36 33 29;
+    --sand-200: 47 43 38;
+    --sand-300: 63 58 51;
+    --sand-400: 107 98 85;
+    --sand-500: 160 148 131;
+    --sand-600: 191 180 164;
+    --sand-700: 212 202 187;
+    --sand-800: 230 222 210;
+    --sand-900: 243 237 228;
+    --espresso-50: 46 37 28;
+    --espresso-100: 58 47 36;
+    --espresso-200: 77 62 47;
+    --espresso-300: 110 89 67;
+    --espresso-400: 154 128 98;
+    --espresso-500: 184 156 124;
+    --espresso-600: 205 177 147;
+    --espresso-700: 220 196 168;
+    --on-accent: 26 22 18;
+    --amber-50: 45 34 16;
+    --amber-100: 58 43 18;
+    --amber-200: 90 67 24;
+    --amber-300: 122 90 28;
+    --amber-600: 224 165 58;
+    --amber-700: 234 179 90;
+    --amber-800: 240 199 124;
+    --red-50: 47 23 23;
+    --red-100: 61 28 28;
+    --red-200: 92 39 39;
+    --red-300: 122 51 51;
+    --red-600: 240 128 128;
+    --red-700: 243 154 154;
+  }
+}
+
 @layer base {
   html {
     /* Set here rather than on a wrapper div so the canvas behind an
        overscroll bounce is paper too, not the browser's white. */
-    background-color: theme("colors.parchment");
+    background-color: rgb(var(--parchment));
   }
 
   body {

@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TraceAI — Digital Identity System</title>
+    <!-- Stamp a saved light/dark choice before first paint, so a user who
+         picked light on a dark OS never sees a dark flash. Mirrors
+         readSaved() in src/theme.js. -->
+    <script>
+      try {
+        var t = localStorage.getItem("traceai-theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

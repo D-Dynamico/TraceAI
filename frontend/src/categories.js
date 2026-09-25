@@ -26,6 +26,19 @@
 //     hue appears only as a dot beside dark ink, never as the text color and
 //     never as a fill the reader must decode.
 //
+// Dark mode is SELECTED, not flipped: each hue has its own dark step, found by
+// a constrained search (same hue ±15° in OKLCH, the validator's dark L band)
+// and then checked with the validator, --mode dark --pairs all, against both
+// dark surfaces (card #211e1b, page #171513):
+//
+//   Lightness band  PASS   Chroma floor  PASS   Normal-vision floor  PASS (16.2)
+//   CVD separation  WARN — worst pair Internships↔Projects ΔE 7.4 (protan)
+//   Contrast        PASS — all six ≥ 3:1, so dark needs less relief than light
+//
+// The light steps' own dark column (#3987e5 blue, #9085e9 violet, …) was tried
+// first and FAILED here: with only six slots in play all-pairs, blue↔violet fell
+// to normal-vision ΔE 9.8 and aqua↔green to 11.9.
+//
 // If you change a hue, re-run the validator rather than trusting that it looks
 // fine. Two candidate orderings failed outright: magenta for Skills collides
 // with Academics red (normal-vision ΔE 13.2, a hard fail), and orange collides
@@ -33,17 +46,54 @@
 
 export const UNCATEGORIZED = "Uncategorized";
 
-// Muted ink, not a palette slot — "no category yet" is an absence of identity,
-// so it deliberately does not get a hue.
-const NEUTRAL = "#898781";
+// Every mark color, as [light, dark]. The rest of the app never sees these hex
+// values: it gets `var(--…)` references (below), and `themeCss()` defines the
+// variables once for each mode, so a theme switch repaints every dot, node and
+// meter without a React re-render and without any component knowing about it.
+const MARKS = {
+  certifications: ["#2a78d6", "#6a8cce"], // blue
+  projects: ["#008300", "#337b15"], // green
+  internships: ["#eda100", "#b8830c"], // yellow
+  achievements: ["#4a3aa7", "#884dec"], // violet
+  academics: ["#e34948", "#bf4d5c"], // red
+  skills: ["#1baf7a", "#16aa8b"], // aqua
+  // Muted ink, not a palette slot — "no category yet" is an absence of
+  // identity, so it deliberately does not get a hue.
+  neutral: ["#898781", "#8f887e"],
+  // See CAREER_PATH_COLOR. Dark is a light warm grey at the same job: 9.81:1 on
+  // the dark card, achromatic, and clearly not one of the six.
+  career: ["#453f38", "#cfc6b8"],
+};
+
+const mark = (name) => `var(--mark-${name})`;
+
+/** The CSS that defines every `--mark-*` variable, light and dark.
+ *
+ * Injected once at startup (main.jsx). Dark applies under the OS setting unless
+ * the page is stamped `data-theme="light"`, and always when stamped "dark" —
+ * so the in-app toggle wins in both directions.
+ */
+export function themeCss() {
+  const block = (i) =>
+    Object.entries(MARKS)
+      .map(([name, pair]) => `--mark-${name}:${pair[i]};`)
+      .join("");
+  return (
+    `:root{${block(0)}}` +
+    `@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){${block(1)}}}` +
+    `:root[data-theme="dark"]{${block(1)}}`
+  );
+}
+
+const NEUTRAL = mark("neutral");
 
 export const CATEGORY_COLORS = {
-  Certifications: "#2a78d6", // blue
-  Projects: "#008300", // green
-  Internships: "#eda100", // yellow
-  Achievements: "#4a3aa7", // violet
-  Academics: "#e34948", // red
-  Skills: "#1baf7a", // aqua
+  Certifications: mark("certifications"),
+  Projects: mark("projects"),
+  Internships: mark("internships"),
+  Achievements: mark("achievements"),
+  Academics: mark("academics"),
+  Skills: mark("skills"),
   [UNCATEGORIZED]: NEUTRAL,
 };
 
@@ -78,17 +128,18 @@ export const CATEGORY_CHOICES = Object.keys(CATEGORY_COLORS).filter(
 // Solved to the same contrast the old #334155 had on this surface — 9.64:1
 // against 9.61:1 — so a career-path node kept its exact visual weight, and the
 // near-black selection ring still separates from it by the prior margin.
-export const CAREER_PATH_COLOR = "#453f38";
+export const CAREER_PATH_COLOR = mark("career");
 
-// Structural colors that have to exist as JS literals: SVG `stroke`/`fill`
-// attributes and inline `style` cannot take a Tailwind class. They live here so
-// the app still has ONE place where a color is decided. Keep them in step with
-// the `sand` scale in tailwind.config.js — the comment beside each says which
-// step it is.
-export const SURFACE_PAPER = "#faf6ef"; // the card surface; also the ring that separates overlapping graph nodes
-export const GRAPH_EDGE = "#dcd3c4"; // sand-300, recessive by design
-export const GRAPH_EDGE_ACTIVE = "#554e44"; // sand-600
-export const GRAPH_NODE_SELECTED = "#191715"; // sand-900
+// Structural colors that have to exist as JS values: SVG strokes/fills and
+// inline `style` cannot take a Tailwind class. They are the theme's own
+// variables (src/index.css), not copies of them, so they follow the mode.
+// Apply them through `style`, not SVG presentation attributes — var() is not
+// reliably resolved in an attribute.
+const token = (name) => `rgb(var(--${name}))`;
+export const SURFACE_PAPER = token("paper"); // the card surface; also the ring that separates overlapping graph nodes
+export const GRAPH_EDGE = token("sand-300"); // recessive by design
+export const GRAPH_EDGE_ACTIVE = token("sand-600");
+export const GRAPH_NODE_SELECTED = token("sand-900");
 
 // The confidence meter. This is a track plus a fill, NOT a two-step sequential
 // ramp — the distinction matters because the ordinal validator judges a ramp of
@@ -101,5 +152,5 @@ export const GRAPH_NODE_SELECTED = "#191715"; // sand-900
 // from a cool #cde2fb to sand-300 because a blue-white groove read as a cold
 // patch on warm paper — the one place the theme change altered a measured
 // value rather than just its hue.
-export const METER_TRACK = "#dcd3c4"; // sand-300
-export const METER_FILL = "#2a78d6";
+export const METER_TRACK = token("sand-300");
+export const METER_FILL = mark("certifications");

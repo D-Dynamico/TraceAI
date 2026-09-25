@@ -3,6 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import KnowledgeGraph, {
   buildModel,
   colorOf,
+  columnLayout,
+  columnOf,
   edgeId,
   heightFor,
   isDashed,
@@ -158,6 +160,44 @@ describe("colorOf", () => {
     // Career Path deliberately has no categorical hue (categories.js); it must
     // read as a different *kind* of thing, not a seventh category.
     expect(colorOf({ type: "career_path" })).toBe(CAREER_PATH_COLOR);
+  });
+});
+
+describe("columnOf / columnLayout", () => {
+  // The left-to-right reading order of the chain. A wrong column here puts a
+  // certificate downstream of the project it enabled.
+  it("places each kind along Certification → Skill → Project/Internship → Career", () => {
+    expect(columnOf({ type: "document", category: "Certifications" })).toBe("learned");
+    expect(columnOf({ type: "document", category: "Academics" })).toBe("learned");
+    expect(columnOf({ type: "skill" })).toBe("skills");
+    expect(columnOf({ type: "document", category: "Projects" })).toBe("applied");
+    expect(columnOf({ type: "document", category: "Internships" })).toBe("applied");
+    expect(columnOf({ type: "career_path" })).toBe("career");
+  });
+
+  it("gives an uncategorized document no column rather than guessing one", () => {
+    expect(columnOf({ type: "document", category: "Uncategorized" })).toBeNull();
+  });
+
+  it("orders columns left to right and spreads only the occupied ones", () => {
+    const all = columnLayout([
+      { type: "career_path" },
+      { type: "skill" },
+      { type: "document", category: "Projects" },
+      { type: "document", category: "Certifications" },
+    ]);
+    expect([...all.keys()]).toEqual(["learned", "skills", "applied", "career"]);
+    expect(all.get("learned")).toBeLessThan(all.get("skills"));
+    expect(all.get("applied")).toBeLessThan(all.get("career"));
+
+    // No career paths inferred yet: three columns share the full width.
+    const three = columnLayout([
+      { type: "skill" },
+      { type: "document", category: "Projects" },
+      { type: "document", category: "Certifications" },
+    ]);
+    expect(three.has("career")).toBe(false);
+    expect(three.get("applied")).toBeCloseTo(5 / 6);
   });
 });
 

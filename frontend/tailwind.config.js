@@ -19,44 +19,32 @@
 //   - `sand.400` therefore survives only as a border/decoration step. Do not
 //     put text on it.
 
+const v = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+const scale = (name, steps) =>
+  Object.fromEntries(steps.map((step) => [step, v(`${name}-${step}`)]));
+
 export default {
   content: ["./index.html", "./src/**/*.{js,jsx}"],
   theme: {
     extend: {
+      // Every value is a CSS variable from src/index.css, where the light and
+      // dark steps live — so `bg-paper`, `text-sand-700` etc. switch mode with
+      // no `dark:` variant anywhere in the components. The light values, and
+      // the WCAG reasoning behind each step, are unchanged from before the
+      // variables; see the comments in index.css for the dark ones.
       colors: {
-        // Surfaces. `paper` is the card, `parchment` the page behind it — the
-        // page must stay the darker of the two or cards stop reading as raised.
-        paper: "#faf6ef",
-        parchment: "#efe9dd",
-
-        // Warm neutral ink + fills (replaces slate).
-        sand: {
-          50: "#fcfaf6",
-          100: "#f8f4ef",
-          200: "#ede7dd",
-          300: "#dcd3c4",
-          400: "#aea08b", // borders/decoration only — 2.38:1, never text
-          500: "#706556", // quiet text; AA on both paper and parchment
-          600: "#554e44",
-          700: "#443f38",
-          800: "#2b2824",
-          900: "#191715",
-        },
-
-        // Accent (replaces indigo). Achromatic-warm on purpose: it sits beside
-        // the six category hues constantly, and a brown that reads as "chrome"
-        // can never be mistaken for a category the way a chromatic accent
-        // could. Same reasoning as CAREER_PATH_COLOR in src/categories.js.
-        espresso: {
-          50: "#f7f1eb",
-          100: "#f0e6db",
-          200: "#e1d1c1",
-          300: "#c9b49f",
-          400: "#ab9176",
-          500: "#8f7254",
-          600: "#765b40", // 5.84:1 as text on paper, 6.29:1 white-on for fills
-          700: "#654d34",
-        },
+        paper: v("paper"),
+        parchment: v("parchment"),
+        sand: scale("sand", [50, 100, 200, 300, 400, 500, 600, 700, 800, 900]),
+        espresso: scale("espresso", [50, 100, 200, 300, 400, 500, 600, 700]),
+        // Only the steps the notices use. Tailwind's own values in light mode,
+        // re-stepped for the dark surface (see index.css).
+        amber: scale("amber", [50, 100, 200, 300, 600, 700, 800]),
+        red: scale("red", [50, 100, 200, 300, 600, 700]),
+        // `text-white` is only ever ink on a strong fill (an espresso button,
+        // the sand-900 tooltip). In dark mode those fills turn light, so the
+        // ink has to turn dark with them.
+        white: v("on-accent"),
       },
       fontFamily: {
         // Inter Tight for UI, Fraunces for the brand + headings. Both are

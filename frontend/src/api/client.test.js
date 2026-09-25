@@ -23,6 +23,38 @@ beforeEach(() => {
   global.fetch = vi.fn();
 });
 
+// uploadFile is XHR, not fetch (it needs upload progress). A minimal stand-in
+// that records what was sent and answers on send().
+function installFakeXhr({ status, body, progress = [] }) {
+  const record = { headers: {} };
+  class FakeXhr {
+    constructor() {
+      this.upload = {};
+    }
+    open(method, url) {
+      record.method = method;
+      record.url = url;
+    }
+    setRequestHeader(k, v) {
+      record.headers[k] = v;
+    }
+    send(payload) {
+      record.body = payload;
+      queueMicrotask(() => {
+        for (const [loaded, total] of progress) {
+          this.upload.onprogress?.({ lengthComputable: true, loaded, total });
+        }
+        this.upload.onload?.();
+        this.status = status;
+        this.responseText = JSON.stringify(body);
+        this.onload?.();
+      });
+    }
+  }
+  vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  return record;
+}
+
 describe("handle (error contract)", () => {
   it("resolves to the parsed JSON on a 2xx", async () => {
     fetch.mockResolvedValue(jsonResponse({ answerable: true, results: [] }));
@@ -91,18 +123,30 @@ describe("request shapes", () => {
   });
 
   it("uploadFile sends multipart form data, not JSON", async () => {
-    fetch.mockResolvedValue(jsonResponse({ id: "abc" }));
+    const xhr = installFakeXhr({ status: 200, body: { id: "abc" } });
     const file = new File(["hi"], "resume.pdf", { type: "application/pdf" });
-    await uploadFile(file);
-    const [url, opts] = fetch.mock.calls[0];
-    expect(url).toBe("/api/upload");
-    expect(opts.body).toBeInstanceOf(FormData);
-    expect(opts.body.get("file")).toBe(file);
+    await expect(uploadFile(file)).resolves.toEqual({ id: "abc" });
+    expect(xhr.method).toBe("POST");
+    expect(xhr.url).toBe("/api/upload");
+    expect(xhr.body).toBeInstanceOf(FormData);
+    expect(xhr.body.get("file")).toBe(file);
     // Still no Content-Type — the browser sets the multipart boundary itself,
     // and setting it by hand produces a body the server cannot parse. The
-    // identity header rides along, so `headers` is no longer absent entirely;
-    // the rule that matters is that Content-Type is not among them.
-    expect(opts.headers["Content-Type"]).toBeUndefined();
-    expect(opts.headers["X-User-Id"]).toBeTruthy();
+    // identity header rides along; the rule that matters is that Content-Type
+    // is not among the headers.
+    expect(xhr.headers["Content-Type"]).toBeUndefined();
+    expect(xhr.headers["X-User-Id"]).toBeTruthy();
+  });
+
+  it("uploadFile reports byte progress, then 1 once the body is sent", async () => {
+    installFakeXhr({ status: 200, body: { id: "abc" }, progress: [[5, 10]] });
+    const seen = [];
+    await uploadFile(new File(["hi"], "a.pdf"), (p) => seen.push(p));
+    expect(seen).toEqual([0.5, 1]);
+  });
+
+  it("uploadFile surfaces the backend's detail on an error status", async () => {
+    installFakeXhr({ status: 413, body: { detail: "File too large." } });
+    await expect(uploadFile(new File(["hi"], "a.pdf"))).rejects.toThrow("File too large.");
   });
 });

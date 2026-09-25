@@ -6,6 +6,14 @@ import ReactDOM from "react-dom/client";
 import { Analytics } from "@vercel/analytics/react";
 import App from "./App.jsx";
 import "./index.css";
+import { themeCss } from "./categories";
+
+// The category mark colors, light and dark, as CSS variables. Defined in JS
+// because categories.js is where each hue is decided and validated; injected
+// before the first render so no mark ever paints unresolved.
+const marks = document.createElement("style");
+marks.textContent = themeCss();
+document.head.appendChild(marks);
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

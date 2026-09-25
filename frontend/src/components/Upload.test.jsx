@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Upload from "./Upload";
 import * as client from "../api/client";
@@ -99,21 +99,52 @@ describe("Upload per-input independence (item A)", () => {
 });
 
 describe("Upload progress + errors", () => {
-  it("shows a pending skeleton while in flight, then replaces it with the card", async () => {
+  it("walks the pipeline: upload %, then the server steps, then indexing", async () => {
+    let progress;
     let release;
-    vi.spyOn(client, "uploadFile").mockReturnValue(
-      new Promise((resolve) => {
-        release = () => resolve(fileResult({ categorization: { category: "Academics", confidence: 0.9, title: "Final Resume" } }));
-      }),
+    vi.spyOn(client, "uploadFile").mockImplementation((_file, onProgress) => {
+      progress = onProgress;
+      return new Promise((resolve) => {
+        release = () => resolve(fileResult());
+      });
+    });
+    let indexed;
+    vi.spyOn(client, "getStatus").mockImplementation(
+      () => new Promise((resolve) => (indexed = () => resolve({ indexed: true }))),
     );
     render(<Upload />);
 
     await userEvent.upload(fileInput(), aFile());
-    expect(await screen.findByText(/categorizing…/i)).toBeInTheDocument();
+    act(() => progress(0.4));
+    expect(await screen.findByText("uploading 40%")).toBeInTheDocument();
+    expect(screen.getByText("categorize")).toBeInTheDocument(); // not started
+
+    act(() => progress(1));
+    expect(await screen.findByText("uploaded")).toBeInTheDocument();
+    expect(screen.getByText("extracting")).toBeInTheDocument();
+    expect(screen.getByText("categorizing")).toBeInTheDocument();
 
     release();
     expect(await screen.findByText("Final Resume")).toBeInTheDocument();
-    expect(screen.queryByText(/categorizing…/i)).not.toBeInTheDocument();
+    expect(screen.getByText("categorized")).toBeInTheDocument();
+    expect(screen.getByText("indexing")).toBeInTheDocument();
+    expect(client.getStatus).toHaveBeenCalledWith("f1");
+
+    indexed();
+    expect(await screen.findByText("indexed")).toBeInTheDocument();
+  });
+
+  it("lists every file of a multi-file drop as queued up front", async () => {
+    vi.spyOn(client, "uploadFile").mockReturnValue(new Promise(() => {}));
+    render(<Upload />);
+
+    await userEvent.upload(fileInput(), [aFile("a.pdf"), aFile("b.pdf"), aFile("c.pdf")]);
+
+    for (const name of ["a.pdf", "b.pdf", "c.pdf"]) {
+      expect(await screen.findByText(name)).toBeInTheDocument();
+    }
+    // Only the first is sending; the other two have not started any step.
+    expect(screen.getAllByText("upload")).toHaveLength(2);
   });
 
   it("surfaces a failed upload in the error banner", async () => {

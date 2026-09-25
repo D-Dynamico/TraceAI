@@ -52,6 +52,11 @@ class CategoryResponse(BaseModel):
     category_source: str
 
 
+class StatusResponse(BaseModel):
+    id: str
+    indexed: bool
+
+
 def _lookup(doc_id: str, user_id: str):
     found = storage.find_by_id(doc_id, user_id)
     if found is None:
@@ -95,6 +100,24 @@ def get_document(
 ) -> DocumentDetail:
     """Fetch one document with its entities, tags, and extracted text."""
     return DocumentDetail.model_validate(_owned(doc_id, user_id))
+
+
+@router.get("/{doc_id}/status", response_model=StatusResponse)
+def get_status(doc_id: str, user_id: str = Depends(current_user)) -> StatusResponse:
+    """Whether a document has reached the vector index yet.
+
+    Ingest answers before indexing runs (it is a background task — see
+    `routes/upload.py::_index_document`), so the upload view polls this to show the
+    last pipeline step honestly instead of ticking it on the response. Its own
+    route rather than a field on detail because detail carries `raw_text`, and
+    a poll should not re-download a whole document every second.
+
+    Reads `embedding_id`, which is set only after a successful upsert, so False
+    means "not yet" or "failed, pending the next startup sync" — never a lie
+    in the other direction.
+    """
+    doc = _owned(doc_id, user_id)
+    return StatusResponse(id=doc_id, indexed=bool(doc.get("embedding_id")))
 
 
 @router.patch("/{doc_id}/category", response_model=CategoryResponse)

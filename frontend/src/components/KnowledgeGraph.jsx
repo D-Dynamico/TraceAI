@@ -61,6 +61,48 @@ export function colorOf(node) {
   return categoryColor(node.category);
 }
 
+// The graph reads left to right along the chain the brief names — Certification
+// → Skill → Project → Internship → Career Path — so each node kind is pulled
+// toward a column, and the columns are labelled across the top. A force-directed
+// layout with no bias scatters that chain into a hairball whose direction has
+// to be explained; with it, the reading order is the picture.
+//
+// A bias, not a grid: the pull is weak enough that links still bend the layout
+// and similar documents still cluster. Only career paths are held firmly, as
+// before — right-side placement is half of their composite encoding.
+export const COLUMNS = [
+  { key: "learned", label: "Learned", short: "Learned" },
+  { key: "skills", label: "Skills", short: "Skills" },
+  { key: "applied", label: "Applied", short: "Applied" },
+  { key: "career", label: "Career paths", short: "Careers" },
+];
+const COLUMN_OF_CATEGORY = {
+  Certifications: "learned",
+  Academics: "learned",
+  Skills: "skills",
+  Projects: "applied",
+  Internships: "applied",
+  Achievements: "applied",
+};
+
+/** Which column a node belongs to, or null (Uncategorized) for no pull. */
+export function columnOf(node) {
+  if (node.type === "career_path") return "career";
+  if (node.type === "skill") return "skills";
+  return COLUMN_OF_CATEGORY[node.category] ?? null;
+}
+
+/** Horizontal position (0–1) of each column that has nodes in it.
+ *
+ * Only occupied columns take space, spread evenly: a graph with no career paths
+ * yet should not leave its right quarter empty waiting for them.
+ */
+export function columnLayout(nodes) {
+  const present = new Set(nodes.map(columnOf));
+  const used = COLUMNS.filter((c) => present.has(c.key));
+  return new Map(used.map((c, i) => [c.key, (i + 0.5) / used.length]));
+}
+
 // Similarity edges (Layer B) are the "non-obvious connection" link and read as
 // dashed; the entity/career chain edges are solid.
 export function isDashed(relation) {
@@ -119,11 +161,11 @@ function GraphSkeleton() {
         <g className="animate-pulse">
           {dots.map(([x, y], i) =>
             dots.slice(i + 1, i + 2).map(([x2, y2]) => (
-              <line key={`l${i}`} x1={x} y1={y} x2={x2} y2={y2} stroke={GRAPH_EDGE} strokeWidth="1.5" />
+              <line key={`l${i}`} x1={x} y1={y} x2={x2} y2={y2} style={{ stroke: GRAPH_EDGE }} strokeWidth="1.5" />
             ))
           )}
           {dots.map(([x, y, r], i) => (
-            <circle key={i} cx={x} cy={y} r={r} fill={GRAPH_EDGE} />
+            <circle key={i} cx={x} cy={y} r={r} style={{ fill: GRAPH_EDGE }} />
           ))}
         </g>
       </svg>
@@ -208,14 +250,21 @@ export default function KnowledgeGraph({ onNavigate }) {
   const height = heightFor(width);
 
   const model = useMemo(() => (data ? buildModel(data) : null), [data]);
+  const headers = useMemo(() => {
+    if (!model) return [];
+    const layout = columnLayout(model.nodes);
+    return COLUMNS.filter((c) => layout.has(c.key)).map((c) => ({ ...c, at: layout.get(c.key) }));
+  }, [model]);
 
   // Build (and tear down) the force simulation whenever the graph data or the
-  // measured width changes. Career-path nodes are pulled to the right by a
-  // dedicated forceX — the placement half of their composite encoding.
+  // measured width changes. forceX pulls each node toward its column (see
+  // COLUMNS); career paths, in the rightmost, are held hardest — the placement
+  // half of their composite encoding.
   useEffect(() => {
     if (!model || model.nodes.length === 0) return;
     nodesRef.current = model.nodes;
     linksRef.current = model.links;
+    const columns = columnLayout(model.nodes);
 
     // Keep every node inside the SVG viewport. A force simulation has no walls,
     // so charge repulsion pushes peripheral nodes off-screen; clamping each
@@ -247,9 +296,13 @@ export default function KnowledgeGraph({ onNavigate }) {
       .force("collide", forceCollide((d) => radiusOf(d) + 14))
       .force(
         "x",
-        forceX((d) => (d.type === "career_path" ? width * 0.8 : width / 2)).strength(
-          (d) => (d.type === "career_path" ? 0.3 : 0.02)
-        )
+        forceX((d) => {
+          const at = columns.get(columnOf(d));
+          return at === undefined ? width / 2 : width * at;
+        }).strength((d) => {
+          if (d.type === "career_path") return 0.3;
+          return columnOf(d) ? 0.12 : 0.02;
+        })
       )
       .force("y", forceY(height / 2).strength(0.04))
       .on("tick", () => {
@@ -500,6 +553,36 @@ export default function KnowledgeGraph({ onNavigate }) {
           aria-label={`Knowledge graph: ${nodesRef.current.length} nodes, ${linksRef.current.length} connections. Tab through the nodes; Enter opens one.`}
           onClick={() => setSelectedId(null)}
         >
+          {/* Column headers: the reading direction, stated. Recessive muted ink
+              so they frame the graph without competing with its labels, and
+              aria-hidden because each node's own label already says its kind. */}
+          <g aria-hidden="true" className="pointer-events-none">
+            {headers.map((h, i) => (
+              <g key={h.key}>
+                {i > 0 && (
+                  <text
+                    x={((headers[i - 1].at + h.at) / 2) * width}
+                    y={14}
+                    textAnchor="middle"
+                    className="fill-sand-400"
+                    style={{ fontSize: 10 }}
+                  >
+                    →
+                  </text>
+                )}
+                <text
+                  x={h.at * width}
+                  y={14}
+                  textAnchor="middle"
+                  className="fill-sand-500 font-medium uppercase"
+                  style={{ fontSize: 10, letterSpacing: "0.06em" }}
+                >
+                  {width < NARROW_WIDTH ? h.short : h.label}
+                </text>
+              </g>
+            ))}
+          </g>
+
           {/* Edges first, so nodes sit on top. */}
           <g>
             {linksRef.current.map((link) => {
@@ -514,7 +597,7 @@ export default function KnowledgeGraph({ onNavigate }) {
                   y1={s.y}
                   x2={t.x}
                   y2={t.y}
-                  stroke={state === "active" ? GRAPH_EDGE_ACTIVE : GRAPH_EDGE}
+                  style={{ stroke: state === "active" ? GRAPH_EDGE_ACTIVE : GRAPH_EDGE }}
                   strokeWidth={state === "active" ? 2 : 1.2}
                   strokeOpacity={state === "dim" ? 0.08 : state === "active" ? 0.9 : 0.5}
                   strokeDasharray={isDashed(link.relation_type) ? "4 3" : undefined}
@@ -556,8 +639,10 @@ export default function KnowledgeGraph({ onNavigate }) {
                 >
                   <circle
                     r={r}
-                    fill={colorOf(node)}
-                    stroke={isSel ? GRAPH_NODE_SELECTED : SURFACE_PAPER}
+                    style={{
+                      fill: colorOf(node),
+                      stroke: isSel ? GRAPH_NODE_SELECTED : SURFACE_PAPER,
+                    }}
                     strokeWidth={isSel ? 2.5 : 1.5}
                   />
                   {labelVisible(node) && (
@@ -666,7 +751,7 @@ export default function KnowledgeGraph({ onNavigate }) {
         <span className="ml-auto inline-flex items-center gap-3 text-sand-500">
           <span className="inline-flex items-center gap-1.5">
             <svg width="20" height="6">
-              <line x1="0" y1="3" x2="20" y2="3" stroke={GRAPH_EDGE} strokeWidth="1.5" />
+              <line x1="0" y1="3" x2="20" y2="3" style={{ stroke: GRAPH_EDGE }} strokeWidth="1.5" />
             </svg>
             linked
           </span>
@@ -677,7 +762,7 @@ export default function KnowledgeGraph({ onNavigate }) {
                 y1="3"
                 x2="20"
                 y2="3"
-                stroke={GRAPH_EDGE}
+                style={{ stroke: GRAPH_EDGE }}
                 strokeWidth="1.5"
                 strokeDasharray="4 3"
               />
